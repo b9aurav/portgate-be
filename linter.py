@@ -254,6 +254,30 @@ def _rule3_qty_balance(
     tolerance_pct: float,
 ) -> None:
     """Rule 3 — Split-shipment PO open balance & tolerance."""
+    # Guard: exhausted PO line (po_open == 0) or negative open balance
+    if po_open <= 0:
+        if inv_qty > 0:
+            state.crit(
+                title=f"Shipment against exhausted PO line (Line {i})",
+                cells=[f"inv-qty{i}", f"po-open{i}"],
+                locs=[["inv", "Tally invoice"], ["po", "Buyer PO"]],
+                body=(
+                    f"The PO open balance for Line {i} is {po_open} PCS (fully "
+                    f"consumed or over-received in prior shipments), but the invoice "
+                    f"ships {inv_qty:,} PCS against it."
+                ),
+                impact=(
+                    "Entry will be refused; no open PO authority exists for this line."
+                ),
+                fix=(
+                    f"Raise a new PO line or amend the existing PO before "
+                    f"shipping Line {i}."
+                ),
+            )
+        else:
+            state.ok(f"Line {i} PO open balance is 0 and no units shipped")
+        return
+
     if inv_qty == po_open:
         state.ok(f"Line {i} quantity matches PO ({inv_qty:,} PCS)")
         return
@@ -483,10 +507,28 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             fix="Supplier must add the UN/LOCODE for the port of discharge.",
         )
 
-    # Incoterm
+    # Incoterm: check invoice incoterm is present; if PO incoterm known, cross-check
     incoterm = meta.incoterm.strip()
     if incoterm:
-        state.ok(f"Incoterm {incoterm} consistent across documents")
+        po_incoterm = (meta.po_incoterm or "").strip()
+        if po_incoterm and po_incoterm.upper() != incoterm.upper():
+            state.crit(
+                title="Incoterm mismatch between PO and invoice",
+                cells=[],
+                locs=[["inv", "Tally invoice"], ["po", "Buyer PO"]],
+                body=(
+                    f"Invoice incoterm '{incoterm}' does not match PO incoterm "
+                    f"'{po_incoterm}'. All trade documents must agree on the "
+                    f"delivery terms."
+                ),
+                impact=(
+                    "Freight and risk allocation will be disputed; customs may "
+                    "query the declared FOB value."
+                ),
+                fix=f"Supplier re-issues the invoice with incoterm '{po_incoterm}'.",
+            )
+        else:
+            state.ok(f"Incoterm {incoterm} consistent across documents")
     else:
         state.crit(
             title="Incoterm missing",
@@ -497,22 +539,37 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             fix="Supplier must specify the agreed Incoterm on the invoice.",
         )
 
-    # Currency
+    # Currency: check invoice currency; if PO currency known, cross-check
     currency = meta.currency.strip().upper()
-    if currency == "USD":
+    po_currency = (meta.po_currency or "USD").strip().upper()
+    if currency == "USD" and po_currency == "USD":
         state.ok("Currency USD on all three documents")
-    else:
+    elif currency != po_currency:
         state.crit(
-            title=f"Unexpected currency '{currency}'",
+            title=f"Currency mismatch: invoice '{currency}' vs PO '{po_currency}'",
+            cells=[],
+            locs=[["inv", "Tally invoice"], ["po", "Buyer PO"]],
+            body=(
+                f"Invoice currency is '{currency}' but the PO specifies '{po_currency}'. "
+                f"All trade documents must use the same transaction currency."
+            ),
+            impact="CBP entered value must be in USD; currency mismatch causes entry rejection.",
+            fix=f"Supplier re-issues the invoice in {po_currency}.",
+        )
+    elif currency != "USD":
+        state.crit(
+            title=f"Unexpected invoice currency '{currency}'",
             cells=[],
             locs=[["inv", "Tally invoice"]],
             body=(
-                f"Invoice currency is '{currency}' but the PO specifies USD. "
-                f"All trade documents must use the same transaction currency."
+                f"Invoice currency is '{currency}'. US CBP requires entered value "
+                f"in USD for all commercial invoices."
             ),
             impact="CBP entered value must be in USD; currency mismatch causes entry rejection.",
             fix="Supplier re-issues the invoice in USD.",
         )
+    else:
+        state.ok("Currency USD on all three documents")
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +596,33 @@ def run_audit(
     # ── Rule 5: Header checks (document-level) ──────────────────────────────
     _rule5_header(state, packet)
 
-    n = min(len(packet.po_lines), len(packet.inv_lines), len(packet.pl_lines))
+    # ── Line count mismatch check ─────────────────────────────────────────────
+    n_po = len(packet.po_lines)
+    n_inv = len(packet.inv_lines)
+    n_pl = len(packet.pl_lines)
+    n = min(n_po, n_inv, n_pl)
+
+    if not (n_po == n_inv == n_pl):
+        state.crit(
+            title="Document line counts do not match",
+            cells=[],
+            locs=[["po", "Buyer PO"], ["inv", "Tally invoice"], ["pl", "Packing list"]],
+            body=(
+                f"PO has {n_po} line(s), Invoice has {n_inv} line(s), and Packing List "
+                f"has {n_pl} line(s). All three documents must have the same number of "
+                f"line items for a valid 3-way match. Auditing the first {n} "
+                f"aligned line(s) only."
+            ),
+            impact=(
+                "Unmatched lines cannot be audited. Customs entry may be incomplete "
+                "or filed against a partially-supported invoice."
+            ),
+            fix=(
+                "Supplier must re-issue documents so all three have identical "
+                "line-item counts."
+            ),
+        )
+
     weights_inv: list[list[float]] = []
     weights_pl: list[list[float]] = []
     cartons_inv: list[int] = []
@@ -606,7 +689,7 @@ def run_audit(
                 open=p.open,
                 price=p.price,
             )
-            for p in packet.po_lines
+            for p in packet.po_lines[:n]  # sliced to n — guaranteed length match
         ],
         inv_lines=[
             InvLineOut(
@@ -615,7 +698,7 @@ def run_audit(
                 qty=inv.qty,
                 rate=inv.rate,
             )
-            for inv in packet.inv_lines
+            for inv in packet.inv_lines[:n]  # sliced to n — guaranteed length match
         ],
         weights=WeightsOut(inv=weights_inv, pl=weights_pl),
         cartons=CartonsOut(inv=cartons_inv, pl=cartons_pl),

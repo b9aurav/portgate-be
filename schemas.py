@@ -36,6 +36,7 @@ class ExtractedPOLine(BaseModel):
     )
     qty: int = Field(description="Total PO quantity in pieces")
     prior: int = Field(
+        default=0,
         description="Quantity already shipped before this shipment (0 if first shipment)"
     )
     open: int = Field(
@@ -115,13 +116,16 @@ class ExtractedMetadata(BaseModel):
         description="ISO 3166-1 alpha-2 country code, always IN for India"
     )
     exporter_gstin: str = Field(
-        description="Indian GSTIN, 15 alphanumeric chars, e.g. 24AABCS1429B1Z5"
+        default="",
+        description="Indian GSTIN, 15 alphanumeric chars, e.g. 24AABCS1429B1Z5. Return empty string if not found."
     )
     exporter_iec: str = Field(
-        description="Indian Importer-Exporter Code, 10 digits, e.g. 5214098211"
+        default="",
+        description="Indian Importer-Exporter Code, 10 digits, e.g. 5214098211. Return empty string if not found."
     )
     exporter_lut_arn: str = Field(
-        description="LUT/Bond ARN from the invoice header, e.g. AD240426009182Z"
+        default="",
+        description="LUT/Bond ARN from the invoice header, e.g. AD240426009182Z. Return empty string if not present."
     )
 
     # Importer (US side)
@@ -131,8 +135,17 @@ class ExtractedMetadata(BaseModel):
     # Logistics
     port_of_loading: str = Field(description="UN/LOCODE, e.g. INMUN1")
     port_of_discharge: str = Field(description="UN/LOCODE, e.g. USLAX")
-    incoterm: str = Field(description="e.g. FOB Mundra")
-    currency: str = Field(description="ISO 4217, should be USD")
+    incoterm: str = Field(description="Incoterm as printed on the invoice, e.g. FOB Mundra")
+    currency: str = Field(description="ISO 4217 currency code on the invoice, should be USD")
+    # Cross-document consistency fields (extracted from PO for linter cross-check)
+    po_incoterm: str = Field(
+        default="",
+        description="Incoterm as printed on the Buyer PO, e.g. FOB Mundra. Return empty string if not found."
+    )
+    po_currency: str = Field(
+        default="USD",
+        description="Currency as printed on the Buyer PO, usually USD."
+    )
 
 
 class ExtractedShipmentPacket(BaseModel):
@@ -213,6 +226,8 @@ class MetadataOut(BaseModel):
     port_of_discharge: str
     incoterm: str
     currency: str
+    po_incoterm: str = ""
+    po_currency: str = "USD"
 
 
 class POLineOut(BaseModel):

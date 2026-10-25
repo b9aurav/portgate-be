@@ -9,7 +9,7 @@ CORS is enabled for all origins (configure ALLOWED_ORIGINS in production).
 
 Environment variables (.env):
     GOOGLE_API_KEY    — Required for live PDF extraction via Gemini
-    GEMINI_MODEL      — Optional, defaults to gemini-2.5-flash-preview-05-20
+    GEMINI_MODEL      — Optional, defaults to gemini-3.8-flash-preview-05-20
     ALLOWED_ORIGINS   — Comma-separated list of allowed CORS origins
                         (defaults to "*" for development)
     LOG_LEVEL         — Uvicorn log level (default: info)
@@ -113,7 +113,7 @@ async def health():
         "status": "ok",
         "service": "portgate",
         "version": "1.0.0",
-        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-05-20"),
+        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
         "api_key_configured": bool(os.getenv("GOOGLE_API_KEY")),
     }
 

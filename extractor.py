@@ -10,7 +10,7 @@ All arithmetic and compliance decisions happen in linter.py.
 
 Environment:
     GOOGLE_API_KEY   — required for live mode
-    GEMINI_MODEL     — optional, defaults to gemini-2.5-flash-preview-05-20
+    GEMINI_MODEL     — optional, defaults to gemini-3.8-flash
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from schemas import ExtractedShipmentPacket  # noqa: E402 (after dotenv)
 # ---------------------------------------------------------------------------
 # Model selection
 # ---------------------------------------------------------------------------
-_DEFAULT_MODEL = "gemini-2.5-flash-preview-05-20"
-_FALLBACK_MODEL = "gemini-2.5-pro-preview-05-06"
+_DEFAULT_MODEL = "gemini-3.8-flash"
+_FALLBACK_MODEL = "gemini-3.8-pro"
 
 
 def _get_client():
@@ -146,7 +146,7 @@ def extract_shipment_packet(
         inv_bytes: Raw bytes of the Tally Prime Commercial Invoice PDF.
         pl_bytes:  Raw bytes of the Packing List PDF.
         model:     Gemini model name (defaults to GEMINI_MODEL env var or
-                   gemini-2.5-flash-preview-05-20).
+                   gemini-3.8-flash-preview-05-20).
 
     Returns:
         A fully populated ExtractedShipmentPacket validated by Pydantic.
@@ -170,11 +170,14 @@ def extract_shipment_packet(
             role="user",
             parts=[
                 types.Part.from_text(
-                    "Please extract and semantically align the three attached documents "
+                    text="Please extract and semantically align the three attached documents "
                     "per your instructions. Return the structured JSON output."
                 ),
+                types.Part.from_text(text="DOCUMENT 1 — US BUYER PURCHASE ORDER:"),
                 _pdf_part(po_bytes),
+                types.Part.from_text(text="DOCUMENT 2 — INDIAN EXPORTER TALLY INVOICE:"),
                 _pdf_part(inv_bytes),
+                types.Part.from_text(text="DOCUMENT 3 — EXPORTER PACKING LIST:"),
                 _pdf_part(pl_bytes),
             ],
         )
@@ -194,8 +197,14 @@ def extract_shipment_packet(
         config=config,
     )
 
-    # Pydantic parses and validates the JSON text from the model
+    # Guard against empty model response
     raw_json = response.text
+    if not raw_json:
+        raise RuntimeError(
+            "Gemini returned an empty response. The model may have refused to process "
+            "one of the PDFs (e.g. due to safety filters or an unreadable document). "
+            "Check the response finish_reason and try again, or use mock=true for testing."
+        )
     return ExtractedShipmentPacket.model_validate_json(raw_json)
 
 
