@@ -1,0 +1,7 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.17
+pydantic==2.9.2
+google-genai==0.8.0
+python-dotenv==1.0.1
+anthropic==0.40.0
