@@ -674,6 +674,8 @@ def run_audit(
     crit_count = sum(1 for it in state.items if it.sev == Severity.crit)
     warn_count = sum(1 for it in state.items if it.sev == Severity.warn)
     status = "BLOCKED" if crit_count > 0 else "CLEAR"
+    
+    sorted_items = sorted(state.items, key=lambda x: 0 if x.sev == Severity.crit else 1)
 
     return AuditResponse(
         shipment_ref=meta.shipment_ref,
@@ -702,7 +704,7 @@ def run_audit(
         ],
         weights=WeightsOut(inv=weights_inv, pl=weights_pl),
         cartons=CartonsOut(inv=cartons_inv, pl=cartons_pl),
-        items=state.items,
+        items=sorted_items,
         passed=state.passed,
         summary=AuditSummary(
             status=status,
@@ -755,6 +757,8 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
         port_of_discharge="USLAX",
         incoterm="FOB Mundra",
         currency="USD",
+        po_incoterm="FOB Mundra",
+        po_currency="USD",
     )
 
     po_lines = [

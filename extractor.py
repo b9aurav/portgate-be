@@ -28,7 +28,7 @@ from schemas import ExtractedShipmentPacket  # noqa: E402 (after dotenv)
 # Model selection
 # ---------------------------------------------------------------------------
 _DEFAULT_MODEL = "gemini-3.8-flash"
-_FALLBACK_MODEL = "gemini-3.8-pro"
+_FALLBACK_MODEL = "gemini-3.6-flash"
 
 
 def _get_client():
@@ -155,11 +155,24 @@ def extract_shipment_packet(
         RuntimeError: If GOOGLE_API_KEY is not set or the API call fails.
         pydantic.ValidationError: If the model returns a schema-invalid response.
     """
+    import time
     from google import genai  # type: ignore
+    from google.genai import errors
     from google.genai import types  # type: ignore
 
     client = _get_client()
     selected_model = model or os.getenv("GEMINI_MODEL", _DEFAULT_MODEL)
+
+    models_to_try = [
+        selected_model,
+        os.getenv("GEMINI_FALLBACK_MODEL", _FALLBACK_MODEL),
+        "gemini-3.8-flash",
+    ]
+
+    unique_models = list(dict.fromkeys(models_to_try))
+
+    response = None
+    last_err = None
 
     # Build inline PDF parts
     def _pdf_part(data: bytes) -> types.Part:
@@ -191,11 +204,29 @@ def extract_shipment_packet(
         max_output_tokens=8192,
     )
 
-    response = client.models.generate_content(
-        model=selected_model,
-        contents=contents,
-        config=config,
-    )
+    for m in unique_models:
+        for attempt in range(3):  # 3 attempts per model
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=contents,
+                    config=config,
+                )
+                break  # Success!
+            except errors.APIError as exc:
+                last_err = exc
+                # Retry on 503 (Overloaded/Unavailable) or 429 (Rate limit)
+                if exc.code in (503, 429):
+                    wait_sec = 2 ** attempt  # exponential: 1s, 2s, 4s
+                    print(f"[PortGate] Model '{m}' returned {exc.code}. Retrying in {wait_sec}s... (attempt {attempt + 1}/3)")
+                    time.sleep(wait_sec)
+                    continue
+                raise  # Raise immediately on 400/401/404 errors
+        if response is not None:
+            break
+
+    if response is None:
+        raise RuntimeError(f"All Gemini models busy/unavailable. Last error: {last_err}")
 
     # Guard against empty model response
     raw_json = response.text
