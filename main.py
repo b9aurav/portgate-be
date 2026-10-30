@@ -296,3 +296,33 @@ if __name__ == "__main__":
         reload=True,
         log_level=os.getenv("LOG_LEVEL", "info").lower(),
     )
+
+# Add or verify in app/main.py
+from typing import Optional
+from fastapi import FastAPI, File, UploadFile
+from models import AuditResponse, ShipmentPacket
+from linter import run_deterministic_audit
+
+# 1. Fast JSON test route (bypasses Gemini OCR to test rules + frontend wiring)
+@app.post("/api/audit/packet", response_model=AuditResponse)
+async def audit_structured_packet(packet: ShipmentPacket):
+    return run_deterministic_audit(packet)
+
+
+# 2. Multipart PDF upload route (Buyer PO is now Optional for 2-way Invoice+PL mode)
+@app.post("/api/audit", response_model=AuditResponse)
+async def audit_documents(
+    invoice_file: UploadFile = File(...),
+    packing_list_file: UploadFile = File(...),
+    po_file: Optional[UploadFile] = File(None),
+):
+    inv_bytes = await invoice_file.read()
+    pl_bytes = await packing_list_file.read()
+    po_bytes = await po_file.read() if po_file else None
+
+    packet = await extract_shipment_packet(
+        invoice_pdf_bytes=inv_bytes,
+        packing_list_pdf_bytes=pl_bytes,
+        po_pdf_bytes=po_bytes,
+    )
+    return run_deterministic_audit(packet)

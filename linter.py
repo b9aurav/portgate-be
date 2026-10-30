@@ -882,3 +882,298 @@ if __name__ == "__main__":
     print("\nPassed checks:")
     for p in result.passed:
         print(f"  [OK] {p}")
+
+
+# app/linter.py
+from typing import List
+from models import (
+    AuditOverallStatus,
+    AuditResponse,
+    AuditSummary,
+    DiscrepancyItem,
+    ShipmentPacket,
+)
+
+
+def _clean_digits(code: str) -> str:
+    return "".join(ch for ch in (code or "") if ch.isdigit())
+
+
+def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
+    findings: List[DiscrepancyItem] = []
+    inv = packet.commercial_invoice
+    pl = packet.packing_list
+    po = packet.buyer_po
+
+    # =========================================================================
+    # TIER 1: DETERMINISTIC CONFLICTS (Internal Math & Invoice <-> Packing List)
+    # =========================================================================
+
+    # Rule D1: Invoice vs Packing List Total Cartons
+    if inv.total_cartons_declared != pl.total_cartons:
+        diff = abs(inv.total_cartons_declared - pl.total_cartons)
+        findings.append(
+            DiscrepancyItem(
+                id="DISC-CARTONS",
+                rule_id="RULE-D01-CARTON-SYNC",
+                category="DETERMINISTIC_CONFLICT",
+                severity="CRITICAL",
+                title="Carton Count Mismatch (Invoice vs. Packing List)",
+                description=(
+                    f"Commercial Invoice declares {inv.total_cartons_declared} cartons, "
+                    f"but Packing List totals {pl.total_cartons} cartons ({diff} carton variance). "
+                    "Both documents must agree before Shipping Bill / Leo generation."
+                ),
+                source_doc_a="Commercial Invoice",
+                source_field_a="total_cartons_declared",
+                source_val_a=f"{inv.total_cartons_declared} CTNS",
+                source_doc_b="Packing List",
+                source_field_b="total_cartons",
+                source_val_b=f"{pl.total_cartons} CTNS",
+                highlight_cells=["inv-ctns", "pl-ctns"],
+                recommended_actions=[
+                    "Verify physical warehouse tally sheet",
+                    "Regenerate either Tally Invoice or Packing List so carton counts match",
+                ],
+            )
+        )
+
+    # Rule D2: Physical Weight Inversion (Net Weight > Gross Weight)
+    if pl.total_net_weight_kg >= pl.total_gross_weight_kg:
+        findings.append(
+            DiscrepancyItem(
+                id="DISC-WEIGHT-INV",
+                rule_id="RULE-D02-WEIGHT-PHYSICS",
+                category="DETERMINISTIC_CONFLICT",
+                severity="CRITICAL",
+                title="Physical Weight Inversion (Net Weight >= Gross Weight)",
+                description=(
+                    f"Packing List Net Weight ({pl.total_net_weight_kg:.1f} kg) is greater than or equal to "
+                    f"Gross Weight ({pl.total_gross_weight_kg:.1f} kg). This triggers immediate ICEGATE/manifest validation failure."
+                ),
+                source_doc_a="Packing List",
+                source_field_a="total_net_weight_kg",
+                source_val_a=f"{pl.total_net_weight_kg:.1f} KG",
+                source_doc_b="Packing List",
+                source_field_b="total_gross_weight_kg",
+                source_val_b=f"{pl.total_gross_weight_kg:.1f} KG",
+                highlight_cells=["pl-net-wt", "pl-gross-wt"],
+                recommended_actions=[
+                    "Swap inverted Net/Gross weight columns in Packing List",
+                ],
+            )
+        )
+
+    # Rule D3: Invoice vs Packing List Gross Weight Drift
+    if abs(inv.total_gross_weight_kg - pl.total_gross_weight_kg) > 0.5:
+        findings.append(
+            DiscrepancyItem(
+                id="DISC-GROSS-SYNC",
+                rule_id="RULE-D03-GROSS-WT-SYNC",
+                category="DETERMINISTIC_CONFLICT",
+                severity="WARNING",
+                title="Gross Weight Disagreement Across Invoice & Packing List",
+                description=(
+                    f"Invoice declares {inv.total_gross_weight_kg:.1f} kg Gross Weight vs. "
+                    f"Packing List {pl.total_gross_weight_kg:.1f} kg."
+                ),
+                source_doc_a="Commercial Invoice",
+                source_field_a="total_gross_weight_kg",
+                source_val_a=f"{inv.total_gross_weight_kg:.1f} KG",
+                source_doc_b="Packing List",
+                source_field_b="total_gross_weight_kg",
+                source_val_b=f"{pl.total_gross_weight_kg:.1f} KG",
+                highlight_cells=["inv-gross-wt", "pl-gross-wt"],
+                recommended_actions=[
+                    "Align Invoice header gross weight with final Packing List scale weight",
+                ],
+            )
+        )
+
+    # Rule D4: Line-item UOM or Quantity mismatch between Invoice and Packing List
+    for idx, inv_item in enumerate(inv.line_items):
+        if idx < len(pl.items):
+            pl_item = pl.items[idx]
+            if inv_item.uom.upper() != pl_item.uom.upper():
+                findings.append(
+                    DiscrepancyItem(
+                        id=f"DISC-UOM-{inv_item.line_no}",
+                        rule_id="RULE-D04-UOM-CONSISTENCY",
+                        category="DETERMINISTIC_CONFLICT",
+                        severity="CRITICAL",
+                        title=f"Line #{inv_item.line_no}: UOM Conflict ({inv_item.uom} vs. {pl_item.uom})",
+                        description=(
+                            f"Invoice bills Line #{inv_item.line_no} in '{inv_item.uom}', "
+                            f"while Packing List declares '{pl_item.uom}'."
+                        ),
+                        source_doc_a="Commercial Invoice",
+                        source_field_a=f"line_items[{idx}].uom",
+                        source_val_a=f"{inv_item.quantity:g} {inv_item.uom}",
+                        source_doc_b="Packing List",
+                        source_field_b=f"items[{idx}].uom",
+                        source_val_b=f"{pl_item.total_quantity:g} {pl_item.uom}",
+                        highlight_cells=[f"inv-qty{inv_item.line_no}", f"pl-qty{inv_item.line_no}"],
+                        recommended_actions=[
+                            "Standardize unit of measure across Invoice and Packing List",
+                        ],
+                    )
+                )
+
+    # =========================================================================
+    # TIER 2: COMMERCIAL VARIANCES (Buyer PO vs. Commercial Invoice)
+    # =========================================================================
+    if po is not None:
+        for idx, inv_item in enumerate(inv.line_items):
+            po_item = next(
+                (p for p in po.line_items if p.line_no == (inv_item.po_line_ref or inv_item.line_no)),
+                po.line_items[idx] if idx < len(po.line_items) else None,
+            )
+            if not po_item:
+                continue
+
+            # Rule V1: Unit Price Variance against Buyer PO
+            price_diff = inv_item.unit_price_usd - po_item.unit_price_usd
+            if abs(price_diff) >= 0.005:
+                pct_diff = (price_diff / po_item.unit_price_usd) * 100 if po_item.unit_price_usd else 0.0
+                total_impact = price_diff * inv_item.quantity
+                sign = "+" if total_impact >= 0 else "-"
+                impact_str = f"{sign}${abs(total_impact):,.2f}"
+                findings.append(
+                    DiscrepancyItem(
+                        id=f"DISC-PRICE-{inv_item.line_no}",
+                        rule_id="RULE-V01-PO-PRICE-VARIANCE",
+                        category="COMMERCIAL_VARIANCE",
+                        severity="CRITICAL" if abs(pct_diff) > 2.0 else "WARNING",
+                        title=f"Line #{inv_item.line_no}: Unit Price Variance vs. Buyer PO ({pct_diff:+.1f}%)",
+                        description=(
+                            f"Tally Invoice bills ${inv_item.unit_price_usd:.2f}/{inv_item.uom} vs. "
+                            f"Buyer PO ${po_item.unit_price_usd:.2f}/{po_item.uom}. "
+                            "Verify whether a buyer price amendment or surcharge was approved."
+                        ),
+                        source_doc_a="Buyer PO",
+                        source_field_a=f"line_items[{idx}].unit_price_usd",
+                        source_val_a=f"${po_item.unit_price_usd:.2f}",
+                        source_doc_b="Commercial Invoice",
+                        source_field_b=f"line_items[{idx}].unit_price_usd",
+                        source_val_b=f"${inv_item.unit_price_usd:.2f}",
+                        highlight_cells=[f"po-rate{inv_item.line_no}", f"inv-rate{inv_item.line_no}"],
+                        financial_impact_note=f"Net invoice impact: {impact_str} USD across {inv_item.quantity:g} {inv_item.uom}",
+                        recommended_actions=[
+                            "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
+                            "If billing typo: Request Revised Tally Invoice at PO rate",
+                        ],
+                    )
+                )
+
+            # Rule V2: Quantity Tolerance Breach vs. Buyer PO
+            if po_item.quantity > 0:
+                qty_diff_pct = ((inv_item.quantity - po_item.quantity) / po_item.quantity) * 100.0
+                if abs(qty_diff_pct) > po.quantity_tolerance_pct:
+                    findings.append(
+                        DiscrepancyItem(
+                            id=f"DISC-QTY-{inv_item.line_no}",
+                            rule_id="RULE-V02-PO-QTY-TOLERANCE",
+                            category="COMMERCIAL_VARIANCE",
+                            severity="WARNING",
+                            title=f"Line #{inv_item.line_no}: Quantity Variance ({qty_diff_pct:+.1f}%) Exceeds ±{po.quantity_tolerance_pct:g}% PO Tolerance",
+                            description=(
+                                f"Invoice quantity ({inv_item.quantity:g} {inv_item.uom}) deviates from "
+                                f"PO quantity ({po_item.quantity:g} {po_item.uom}) beyond allowed ±{po.quantity_tolerance_pct:g}% tolerance."
+                            ),
+                            source_doc_a="Buyer PO",
+                            source_field_a=f"line_items[{idx}].quantity",
+                            source_val_a=f"{po_item.quantity:g} {po_item.uom}",
+                            source_doc_b="Commercial Invoice",
+                            source_field_b=f"line_items[{idx}].quantity",
+                            source_val_b=f"{inv_item.quantity:g} {inv_item.uom}",
+                            highlight_cells=[f"po-qty{inv_item.line_no}", f"inv-qty{inv_item.line_no}"],
+                            recommended_actions=[
+                                "Approve as authorized split/short shipment",
+                                "Request supplier correction if quantity was mis-keyed",
+                            ],
+                        )
+                    )
+
+            # =========================================================================
+            # TIER 3: COMPLIANCE ADVISORIES (HSN/HTS Root & Conditional Tax Route)
+            # =========================================================================
+
+            # Rule C1: 6-Digit WCO HS Subheading Root Divergence (Advisory — PO is not legal authority)
+            inv_hsn_root = _clean_digits(inv_item.hsn_code)[:6]
+            po_hts_root = _clean_digits(po_item.hts_code)[:6]
+            if inv_hsn_root and po_hts_root and inv_hsn_root != po_hts_root:
+                findings.append(
+                    DiscrepancyItem(
+                        id=f"DISC-HS-{inv_item.line_no}",
+                        rule_id="RULE-C01-WCO-HS6-DIVERGENCE",
+                        category="COMPLIANCE_ADVISORY",
+                        severity="WARNING",
+                        title=f"Line #{inv_item.line_no}: 6-Digit HS Root Divergence (Invoice {inv_hsn_root} vs. PO {po_hts_root})",
+                        description=(
+                            f"Supplier Tally HSN ({inv_item.hsn_code}) and Buyer PO reference HTS ({po_item.hts_code}) "
+                            "differ at the international 6-digit WCO subheading level. Note: Buyer PO HTS is a commercial "
+                            "reference only—confirm binding US classification with licensed customs broker."
+                        ),
+                        source_doc_a="Buyer PO (Commercial Ref)",
+                        source_field_a=f"line_items[{idx}].hts_code",
+                        source_val_a=po_item.hts_code,
+                        source_doc_b="Commercial Invoice (Supplier HSN)",
+                        source_field_b=f"line_items[{idx}].hsn_code",
+                        source_val_b=inv_item.hsn_code,
+                        highlight_cells=[f"po-hts{inv_item.line_no}", f"inv-hsn{inv_item.line_no}"],
+                        recommended_actions=[
+                            "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
+                            "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally",
+                        ],
+                    )
+                )
+
+    # Rule C2: Conditional Indian Export GST Route Check (LUT Bond vs. IGST Payment)
+    if inv.export_tax_route == "LUT_BOND" and not (inv.lut_arn_number and inv.lut_arn_number.strip()):
+        findings.append(
+            DiscrepancyItem(
+                id="DISC-LUT-ARN",
+                rule_id="RULE-C02-EXPORT-GST-ROUTE",
+                category="COMPLIANCE_ADVISORY",
+                severity="WARNING",
+                title="Missing LUT Bond ARN for Zero-Rated Export (LUT Route Selected)",
+                description=(
+                    "Invoice indicates zero-rated export under Letter of Undertaking (IGST = $0.00), "
+                    "but the mandatory CBIC LUT Application Reference Number (ARN) is omitted from the header."
+                ),
+                source_doc_a="Commercial Invoice",
+                source_field_a="export_tax_route",
+                source_val_a="EXPORT UNDER LUT (IGST $0)",
+                source_doc_b="Commercial Invoice",
+                source_field_b="lut_arn_number",
+                source_val_b="MISSING",
+                highlight_cells=["inv-lut"],
+                recommended_actions=[
+                    "Add valid FY LUT ARN reference on Tally Invoice header",
+                    "Or confirm shipment is exported under IGST Payment route",
+                ],
+            )
+        )
+
+    deterministic_count = sum(1 for f in findings if f.category == "DETERMINISTIC_CONFLICT")
+    variance_count = sum(1 for f in findings if f.category == "COMMERCIAL_VARIANCE")
+    advisory_count = sum(1 for f in findings if f.category == "COMPLIANCE_ADVISORY")
+    unresolved_count = sum(1 for f in findings if f.resolution_state == "UNRESOLVED")
+
+    status: AuditOverallStatus = "VERIFIED_CLEAN"
+    if unresolved_count > 0:
+        status = "ACTION_REQUIRED"
+    elif len(findings) > 0:
+        status = "CLEARED_WITH_EXCEPTIONS"
+
+    summary = AuditSummary(
+        status=status,
+        audit_mode="3_WAY_FULL" if po is not None else "2_WAY_INVOICE_PL",
+        total_findings=len(findings),
+        deterministic_conflicts=deterministic_count,
+        commercial_variances=variance_count,
+        compliance_advisories=advisory_count,
+        unresolved_count=unresolved_count,
+    )
+
+    return AuditResponse(packet=packet, summary=summary, discrepancies=findings)

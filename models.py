@@ -1,0 +1,141 @@
+# app/models.py
+from typing import List, Literal, Optional
+from pydantic import BaseModel, Field
+
+FindingCategory = Literal[
+    "DETERMINISTIC_CONFLICT",  # Hard math / internal document conflict (e.g., Invoice vs PL cartons)
+    "COMMERCIAL_VARIANCE",     # Commercial difference vs Buyer PO (e.g., unit price or split-shipment qty)
+    "COMPLIANCE_ADVISORY",     # Conditional regulatory or classification check (e.g., HSN/HTS root or LUT route)
+]
+
+SeverityLevel = Literal["CRITICAL", "WARNING", "INFO"]
+
+ResolutionState = Literal[
+    "UNRESOLVED",
+    "REVISION_REQUESTED",
+    "ACCEPTED_EXCEPTION",
+    "ESCALATED_TO_BROKER",
+]
+
+AuditOverallStatus = Literal[
+    "ACTION_REQUIRED",
+    "CLEARED_WITH_EXCEPTIONS",
+    "VERIFIED_CLEAN",
+]
+
+
+class POLineItem(BaseModel):
+    line_no: int
+    sku: str
+    description: str
+    hts_code: str = Field(description="US HTS code on Buyer PO, e.g., 6302.21.5020")
+    quantity: float
+    uom: str = "PCS"
+    unit_price_usd: float
+    total_usd: float
+
+
+class BuyerPO(BaseModel):
+    po_number: str
+    buyer_name: str
+    po_date: str
+    incoterms: str = "FOB MUNDRA"
+    quantity_tolerance_pct: float = 5.0
+    line_items: List[POLineItem]
+    total_po_value_usd: float
+
+
+class InvoiceLineItem(BaseModel):
+    line_no: int
+    po_line_ref: Optional[int] = None
+    description: str
+    hsn_code: str = Field(description="Indian HSN code on Tally Invoice, e.g., 6302.21.00")
+    quantity: float
+    uom: str = "PCS"
+    unit_price_usd: float
+    total_usd: float
+    match_confidence: Literal["HIGH", "MEDIUM", "REVIEW_REQUIRED"] = "HIGH"
+
+
+class CommercialInvoice(BaseModel):
+    invoice_number: str
+    invoice_date: str
+    exporter_name: str
+    exporter_gstin: Optional[str] = None
+    export_tax_route: Literal["LUT_BOND", "IGST_PAYMENT", "UNKNOWN"] = "LUT_BOND"
+    lut_arn_number: Optional[str] = None
+    igst_amount_usd: Optional[float] = 0.0
+    buyer_po_ref: Optional[str] = None
+    total_cartons_declared: int
+    total_net_weight_kg: float
+    total_gross_weight_kg: float
+    total_invoice_value_usd: float
+    line_items: List[InvoiceLineItem]
+
+
+class PackingListCartonGroup(BaseModel):
+    line_no: int
+    description: str
+    carton_count: int
+    total_quantity: float
+    uom: str = "PCS"
+    net_weight_kg: float
+    gross_weight_kg: float
+
+
+class PackingList(BaseModel):
+    pl_number: str
+    invoice_ref: str
+    total_cartons: int
+    total_quantity: float
+    total_net_weight_kg: float
+    total_gross_weight_kg: float
+    items: List[PackingListCartonGroup]
+
+
+class ShipmentPacket(BaseModel):
+    shipment_id: str = "SHP-2026-8841"
+    corridor: str = "IN-MUN -> US-LAX"
+    buyer_po: Optional[BuyerPO] = None
+    commercial_invoice: CommercialInvoice
+    packing_list: PackingList
+
+
+class DiscrepancyItem(BaseModel):
+    id: str
+    rule_id: str
+    category: FindingCategory
+    severity: SeverityLevel
+    title: str
+    description: str
+    source_doc_a: str
+    source_field_a: str
+    source_val_a: str
+    source_doc_b: str
+    source_field_b: str
+    source_val_b: str
+    highlight_cells: List[str] = Field(default_factory=list)
+    financial_impact_note: Optional[str] = None
+    recommended_actions: List[str] = Field(default_factory=list)
+    resolution_state: ResolutionState = "UNRESOLVED"
+    resolution_reason_chip: Optional[str] = None
+    resolution_note: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[str] = None
+
+
+class AuditSummary(BaseModel):
+    status: AuditOverallStatus
+    audit_mode: Literal["3_WAY_FULL", "2_WAY_INVOICE_PL"]
+    ruleset_version: str = "IN-US-2026.4"
+    total_findings: int
+    deterministic_conflicts: int
+    commercial_variances: int
+    compliance_advisories: int
+    unresolved_count: int
+
+
+class AuditResponse(BaseModel):
+    packet: ShipmentPacket
+    summary: AuditSummary
+    discrepancies: List[DiscrepancyItem]
