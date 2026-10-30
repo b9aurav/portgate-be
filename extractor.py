@@ -175,8 +175,28 @@ def extract_shipment_packet(
     last_err = None
 
     # Build inline PDF parts
-    def _pdf_part(data: bytes) -> types.Part:
-        return types.Part.from_bytes(data=data, mime_type="application/pdf")
+    import io
+    import pypdfium2 as pdfium  # type: ignore
+
+    def _pdf_to_parts(data: bytes) -> list[types.Part]:
+        """Convert PDF bytes into fast inline PNG image parts (150 DPI)."""
+        try:
+            pdf = pdfium.PdfDocument(data)
+            parts: list[types.Part] = []
+            for page in pdf:
+                # scale=2.0 renders at ~144 DPI — crisp text, tiny payload (~60KB)
+                bitmap = page.render(scale=2.0)
+                pil_img = bitmap.to_pil()
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG", optimize=True)
+                parts.append(
+                    types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png")
+                )
+            pdf.close()
+            return parts
+        except Exception:
+            # Fallback to raw PDF if pypdfium2 isn't installed or fails
+            return [types.Part.from_bytes(data=data, mime_type="application/pdf")]
 
     contents = [
         types.Content(
@@ -187,31 +207,41 @@ def extract_shipment_packet(
                     "per your instructions. Return the structured JSON output."
                 ),
                 types.Part.from_text(text="DOCUMENT 1 — US BUYER PURCHASE ORDER:"),
-                _pdf_part(po_bytes),
+                *_pdf_to_parts(po_bytes),
                 types.Part.from_text(text="DOCUMENT 2 — INDIAN EXPORTER TALLY INVOICE:"),
-                _pdf_part(inv_bytes),
+                *_pdf_to_parts(inv_bytes),
                 types.Part.from_text(text="DOCUMENT 3 — EXPORTER PACKING LIST:"),
-                _pdf_part(pl_bytes),
+                *_pdf_to_parts(pl_bytes),
             ],
         )
     ]
 
-    config = types.GenerateContentConfig(
+    config_kwargs = dict(
         system_instruction=_SYSTEM_PROMPT,
         response_mime_type="application/json",
         response_schema=ExtractedShipmentPacket,
-        temperature=0.0,  # deterministic extraction
-        max_output_tokens=8192,
+        temperature=0.0,
+        max_output_tokens=4096,
+        http_options=types.HttpOptions(timeout=35000),  # 35s max per attempt (in ms)
     )
+
+    if hasattr(types, "ThinkingConfig"):
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+
+    config = types.GenerateContentConfig(**config_kwargs)
 
     for m in unique_models:
         for attempt in range(3):  # 3 attempts per model
             try:
+                t0 = time.perf_counter()
+                print(f"[PortGate] Calling Gemini model '{m}' (attempt {attempt + 1})...")
                 response = client.models.generate_content(
                     model=m,
                     contents=contents,
                     config=config,
                 )
+                elapsed = time.perf_counter() - t0
+                print(f"[PortGate] Gemini '{m}' responded in {elapsed:.2f}s")
                 break  # Success!
             except errors.APIError as exc:
                 last_err = exc
