@@ -108,4 +108,4 @@ if __name__ == "__main__":
     assert res_2way.summary.audit_mode == "2_WAY_INVOICE_PL"
     assert res_2way.summary.commercial_variances == 0
     assert res_2way.summary.compliance_advisories == 0    # LUT rule skipped when IGST_PAYMENT is used!
-    print("\n✅ All deterministic linter assertions passed!")
+    print("\n[OK] All deterministic linter assertions passed!")

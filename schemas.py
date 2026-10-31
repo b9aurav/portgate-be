@@ -13,9 +13,26 @@ Two categories:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Shared type aliases
+# ---------------------------------------------------------------------------
+
+FindingCategory = Literal[
+    "DETERMINISTIC_CONFLICT",
+    "COMMERCIAL_VARIANCE",
+    "COMPLIANCE_ADVISORY",
+]
+
+AuditOverallStatus = Literal[
+    "ACTION_REQUIRED",
+    "CLEARED_WITH_EXCEPTIONS",
+    "VERIFIED_CLEAN",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +144,10 @@ class ExtractedMetadata(BaseModel):
         default="",
         description="LUT/Bond ARN from the invoice header, e.g. AD240426009182Z. Return empty string if not present."
     )
+    export_tax_route: str = Field(
+        default="LUT_BOND",
+        description="Indian export tax route: 'LUT_BOND' or 'IGST_PAYMENT'. Default to 'LUT_BOND'."
+    )
 
     # Importer (US side)
     importer_name: str
@@ -181,6 +202,10 @@ class DiscrepancyItem(BaseModel):
 
     id: str = Field(description="e.g. ERR-01, WARN-01")
     sev: Severity
+    category: FindingCategory = Field(
+        default="DETERMINISTIC_CONFLICT",
+        description="Finding tier: DETERMINISTIC_CONFLICT, COMMERCIAL_VARIANCE, or COMPLIANCE_ADVISORY",
+    )
     title: str
     cells: list[str] = Field(
         description=(
@@ -200,7 +225,9 @@ class DiscrepancyItem(BaseModel):
 
 
 class AuditSummary(BaseModel):
-    status: str = Field(description="CLEAR or BLOCKED")
+    status: AuditOverallStatus = Field(
+        description="ACTION_REQUIRED, CLEARED_WITH_EXCEPTIONS, or VERIFIED_CLEAN"
+    )
     critical_count: int
     warning_count: int
     passed_count: int
@@ -220,6 +247,7 @@ class MetadataOut(BaseModel):
     exporter_gstin: str
     exporter_iec: str
     exporter_lut_arn: str
+    export_tax_route: str = "LUT_BOND"
     importer_name: str
     importer_city_state: str
     port_of_loading: str
@@ -245,6 +273,7 @@ class InvLineOut(BaseModel):
     hsn: str
     qty: int
     rate: float
+    amount: float | None = None
 
 
 class WeightsOut(BaseModel):

@@ -1,16 +1,16 @@
-"""
-linter.py — Deterministic 3-way compliance rules engine for PortGate.
+﻿"""
+linter.py â€” Deterministic 3-way compliance rules engine for PortGate.
 
 ALL mathematical checks, HS-root comparisons, price checks, weight
 plausibility, and carton parity are implemented here in pure Python.
 The LLM (extractor.py) is NEVER consulted here.
 
 Rule catalogue (matches Section 4 of the product spec):
-  Rule 1 — 6-digit HS / HTS international root parity          (crit)
-  Rule 2 — Unit price & extended line math check               (crit)
-  Rule 3 — Split-shipment PO open balance & tolerance          (warn | crit)
-  Rule 4 — Net vs. gross weight plausibility & carton parity   (crit)
-  Rule 5 — Document-level Indian export header checks          (passed | crit)
+  Rule 1 â€” 6-digit HS / HTS international root parity          (crit)
+  Rule 2 â€” Unit price & extended line math check               (crit)
+  Rule 3 â€” Split-shipment PO open balance & tolerance          (warn | crit)
+  Rule 4 â€” Net vs. gross weight plausibility & carton parity   (crit)
+  Rule 5 â€” Document-level Indian export header checks          (passed | crit)
 
 Run standalone for a self-test:
     python linter.py
@@ -23,14 +23,17 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List, Optional
 
+import models as m
 from schemas import (
+    AuditOverallStatus,
     AuditResponse,
     AuditSummary,
     CartonsOut,
     DiscrepancyItem,
     ExtractedShipmentPacket,
+    FindingCategory,
     InvLineOut,
     MetadataOut,
     POLineOut,
@@ -55,7 +58,7 @@ def _root6(code: str) -> str:
 
 
 def _fmt_root(raw6: str) -> str:
-    """Format 6-digit root with a dot after position 4, e.g. '610910' → '6109.10'."""
+    """Format 6-digit root with a dot after position 4, e.g. '610910' â†’ '6109.10'."""
     return f"{raw6[:4]}.{raw6[4:6]}" if len(raw6) >= 6 else raw6
 
 
@@ -104,11 +107,13 @@ class _LintState:
         body: str,
         impact: str,
         fix: str,
+        category: FindingCategory = "DETERMINISTIC_CONFLICT",
     ) -> None:
         self.items.append(
             DiscrepancyItem(
                 id=self._next_err_id(),
                 sev=Severity.crit,
+                category=category,
                 title=title,
                 cells=cells,
                 locs=locs,
@@ -126,11 +131,13 @@ class _LintState:
         body: str,
         impact: str,
         fix: str,
+        category: FindingCategory = "DETERMINISTIC_CONFLICT",
     ) -> None:
         self.items.append(
             DiscrepancyItem(
                 id=self._next_warn_id(),
                 sev=Severity.warn,
+                category=category,
                 title=title,
                 cells=cells,
                 locs=locs,
@@ -149,7 +156,7 @@ class _LintState:
 # ---------------------------------------------------------------------------
 
 def _rule1_hs_root(state: _LintState, i: int, po_hts: str, inv_hsn: str) -> None:
-    """Rule 1 — 6-digit HS / HTS international root parity."""
+    """Rule 1 â€” 6-digit HS / HTS international root parity."""
     po_root = _root6(po_hts)
     inv_root = _root6(inv_hsn)
 
@@ -171,6 +178,7 @@ def _rule1_hs_root(state: _LintState, i: int, po_hts: str, inv_hsn: str) -> None
                 f"Supplier re-issues Line {i} with HSN {_fmt_root(po_root)}.00 "
                 f"to match the PO HTS international root."
             ),
+            category="COMPLIANCE_ADVISORY",
         )
     else:
         state.ok(f"Line {i} 6-digit HS root matches ({_fmt_root(po_root)})")
@@ -184,10 +192,10 @@ def _rule2_unit_price(
     inv_qty: int,
     inv_line_total: float,
 ) -> None:
-    """Rule 2 — Unit price & extended line math check."""
+    """Rule 2 â€” Unit price & extended line math check."""
     price_ok = abs(inv_rate - po_price) <= 0.001
 
-    # Internal invoice math check (qty × rate vs printed total)
+    # Internal invoice math check (qty Ã— rate vs printed total)
     computed_total = inv_qty * inv_rate
     math_ok = abs(computed_total - inv_line_total) <= 0.05
 
@@ -210,6 +218,7 @@ def _rule2_unit_price(
                     f"Supplier re-bills at ${po_price:.2f}; "
                     f"line amount drops to ${inv_qty * po_price:,.2f}."
                 ),
+                category="COMMERCIAL_VARIANCE",
             )
         else:
             # Under-billing: warn but flag it
@@ -226,23 +235,25 @@ def _rule2_unit_price(
                     "require a post-entry amendment."
                 ),
                 fix=f"Supplier re-bills at the agreed PO price of ${po_price:.2f}.",
+                category="COMMERCIAL_VARIANCE",
             )
     else:
         state.ok(f"Line {i} unit price matches PO (${po_price:.2f})")
 
-    # Internal math check — separate from price check
+    # Internal math check â€” separate from price check
     if not math_ok:
         state.crit(
             title=f"Invoice line-total arithmetic error on Line {i}",
             cells=[f"inv-qty{i}", f"inv-rate{i}", f"inv-amt{i}"],
             locs=[["inv", "Tally invoice"]],
             body=(
-                f"Computed line total ({inv_qty} × ${inv_rate:.2f} = "
+                f"Computed line total ({inv_qty} Ã— ${inv_rate:.2f} = "
                 f"${computed_total:,.2f}) does not match the printed amount "
                 f"${inv_line_total:,.2f}."
             ),
             impact="CBP entered-value discrepancy; potential customs exam trigger.",
             fix="Supplier corrects the line total in the Tally invoice.",
+            category="DETERMINISTIC_CONFLICT",
         )
 
 
@@ -253,7 +264,7 @@ def _rule3_qty_balance(
     inv_qty: int,
     tolerance_pct: float,
 ) -> None:
-    """Rule 3 — Split-shipment PO open balance & tolerance."""
+    """Rule 3 â€” Split-shipment PO open balance & tolerance."""
     # Guard: exhausted PO line (po_open == 0) or negative open balance
     if po_open <= 0:
         if inv_qty > 0:
@@ -273,6 +284,7 @@ def _rule3_qty_balance(
                     f"Raise a new PO line or amend the existing PO before "
                     f"shipping Line {i}."
                 ),
+                category="COMMERCIAL_VARIANCE",
             )
         else:
             state.ok(f"Line {i} PO open balance is 0 and no units shipped")
@@ -283,7 +295,7 @@ def _rule3_qty_balance(
         return
 
     if inv_qty < po_open:
-        # Partial shipment — allowed but flag for audit trail
+        # Partial shipment â€” allowed but flag for audit trail
         state.ok(
             f"Line {i} partial shipment: {inv_qty:,} PCS shipped of "
             f"{po_open:,} PCS open balance"
@@ -301,11 +313,12 @@ def _rule3_qty_balance(
             body=(
                 f"Shipped {inv_qty:,} PCS exceeds the {po_open:,} PCS open balance "
                 f"by +{overage_pct:.1f}%. This is within the buyer's "
-                f"±{tolerance_pct:.0f}% split-shipment tolerance, so it passes "
+                f"Â±{tolerance_pct:.0f}% split-shipment tolerance, so it passes "
                 f"with a flag."
             ),
             impact="No action required; recorded in the audit trail.",
             fix="Passed via tolerance rule.",
+            category="COMMERCIAL_VARIANCE",
         )
     else:
         state.crit(
@@ -315,7 +328,7 @@ def _rule3_qty_balance(
             body=(
                 f"Shipped {inv_qty:,} PCS exceeds the {po_open:,} PCS open balance "
                 f"by +{overage_pct:.1f}%, which is beyond the buyer's "
-                f"±{tolerance_pct:.0f}% tolerance."
+                f"Â±{tolerance_pct:.0f}% tolerance."
             ),
             impact=(
                 "Over-shipment will be refused at receiving; excess inventory "
@@ -325,6 +338,7 @@ def _rule3_qty_balance(
                 f"Reduce shipped quantity on Line {i} to no more than "
                 f"{round(po_open * (1 + tolerance_pct / 100)):,} PCS."
             ),
+            category="COMMERCIAL_VARIANCE",
         )
 
 
@@ -338,7 +352,7 @@ def _rule4_weights_cartons(
     inv_ctns: int,
     pl_ctns: int,
 ) -> None:
-    """Rule 4 — Net vs. gross weight plausibility & packing list parity."""
+    """Rule 4 â€” Net vs. gross weight plausibility & packing list parity."""
     issues: list[str] = []
     cells: list[str] = []
     wt_tol = 0.05  # kg
@@ -361,13 +375,13 @@ def _rule4_weights_cartons(
     # Invoice vs packing list weight parity
     if abs(inv_net - pl_net) > wt_tol:
         issues.append(
-            f"Invoice net weight {inv_net:.2f} kg ≠ packing list {pl_net:.2f} kg."
+            f"Invoice net weight {inv_net:.2f} kg â‰  packing list {pl_net:.2f} kg."
         )
         cells += [f"inv-net{i}"]
 
     if abs(inv_gross - pl_gross) > wt_tol:
         issues.append(
-            f"Invoice gross weight {inv_gross:.2f} kg ≠ packing list {pl_gross:.2f} kg."
+            f"Invoice gross weight {inv_gross:.2f} kg â‰  packing list {pl_gross:.2f} kg."
         )
         cells += [f"inv-gross{i}"]
 
@@ -398,9 +412,10 @@ def _rule4_weights_cartons(
                 "port. Carrier may impose D&D charges."
             ),
             fix=(
-                f"Supplier corrects net weight to be ≤ gross weight and reconciles "
+                f"Supplier corrects net weight to be â‰¤ gross weight and reconciles "
                 f"carton count across all documents for Line {i}."
             ),
+            category="DETERMINISTIC_CONFLICT",
         )
 
 
@@ -409,7 +424,7 @@ def _rule4_total_cartons(
     total_inv_ctns: int,
     total_pl_ctns: int,
 ) -> None:
-    """Rule 4 sub-check — total carton count parity across documents."""
+    """Rule 4 sub-check â€” total carton count parity across documents."""
     if total_inv_ctns != total_pl_ctns:
         # Already covered per-line; add a document-level summary note
         # (The per-line rule already emits a crit, so only add to passed if equal)
@@ -422,7 +437,7 @@ def _rule4_total_cartons(
 
 
 def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
-    """Rule 5 — Document-level & Indian export header checks."""
+    """Rule 5 â€” Document-level & Indian export header checks."""
     meta = packet.metadata
 
     # GSTIN format
@@ -440,6 +455,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             ),
             impact="Shipment may be held at Indian customs for GSTIN mismatch.",
             fix="Verify the GSTIN against the GST portal and re-issue the invoice.",
+            category="COMPLIANCE_ADVISORY",
         )
 
     # IEC format
@@ -453,29 +469,34 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             ),
             impact="Shipment may be blocked at Indian customs for IEC mismatch.",
             fix="Verify the IEC against the DGFT portal.",
+            category="COMPLIANCE_ADVISORY",
         )
 
-    # LUT ARN present
-    if meta.exporter_lut_arn:
+    # LUT ARN present (conditional on export tax route)
+    tax_route = getattr(meta, "export_tax_route", "LUT_BOND") or "LUT_BOND"
+    if str(tax_route).upper() == "IGST_PAYMENT":
+        state.ok("Export under payment of IGST route (LUT/Bond ARN not required)")
+    elif meta.exporter_lut_arn and meta.exporter_lut_arn.strip():
         state.ok("LUT ARN present; IGST at 0% stripped")
     else:
         state.crit(
             title="Missing LUT / Bond ARN",
             cells=[],
             locs=[["inv", "Tally invoice"]],
-            body="No LUT or Bond ARN found on the commercial invoice.",
+            body="Invoice indicates export under LUT/Bond, but no LUT or Bond ARN was found on the commercial invoice.",
             impact=(
                 "Without LUT/Bond, IGST should have been collected. "
                 "CBP may treat this as a valuation issue."
             ),
             fix=(
                 "Supplier must obtain LUT from GST portal and print the ARN "
-                "on the invoice."
+                "on the invoice, or export under IGST payment route."
             ),
+            category="COMPLIANCE_ADVISORY",
         )
 
     # Exporter / importer name consistency
-    # (basic presence check — deeper check would need NLP)
+    # (basic presence check â€” deeper check would need NLP)
     if meta.exporter_name and meta.importer_name:
         state.ok("Seller and buyer names match the PO")
 
@@ -491,6 +512,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             body="Port of loading is blank on the commercial invoice.",
             impact="ISF (10+2) filing will be rejected without a valid UN/LOCODE.",
             fix="Supplier must add the UN/LOCODE for the port of loading.",
+            category="COMPLIANCE_ADVISORY",
         )
 
     # Port of Discharge
@@ -505,6 +527,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             body="Port of discharge is blank on the commercial invoice.",
             impact="Entry summary cannot be filed without a discharge port.",
             fix="Supplier must add the UN/LOCODE for the port of discharge.",
+            category="COMPLIANCE_ADVISORY",
         )
 
     # Incoterm: check invoice incoterm is present; if PO incoterm known, cross-check
@@ -526,6 +549,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
                     "query the declared FOB value."
                 ),
                 fix=f"Supplier re-issues the invoice with incoterm '{po_incoterm}'.",
+                category="COMMERCIAL_VARIANCE",
             )
         else:
             state.ok(f"Incoterm {incoterm} consistent across documents")
@@ -537,6 +561,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             body="No Incoterm found on the commercial invoice.",
             impact="Freight and insurance allocations cannot be verified.",
             fix="Supplier must specify the agreed Incoterm on the invoice.",
+            category="COMMERCIAL_VARIANCE",
         )
 
     # Currency: check invoice currency; if PO currency known, cross-check
@@ -555,6 +580,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             ),
             impact="CBP entered value must be in USD; currency mismatch causes entry rejection.",
             fix=f"Supplier re-issues the invoice in {po_currency}.",
+            category="COMMERCIAL_VARIANCE",
         )
     elif currency != "USD":
         state.crit(
@@ -567,6 +593,7 @@ def _rule5_header(state: _LintState, packet: ExtractedShipmentPacket) -> None:
             ),
             impact="CBP entered value must be in USD; currency mismatch causes entry rejection.",
             fix="Supplier re-issues the invoice in USD.",
+            category="COMMERCIAL_VARIANCE",
         )
     else:
         state.ok("Currency USD on all three documents")
@@ -593,10 +620,10 @@ def run_audit(
     state = _LintState()
     meta = packet.metadata
 
-    # ── Rule 5: Header checks (document-level) ──────────────────────────────
+    # â”€â”€ Rule 5: Header checks (document-level) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     _rule5_header(state, packet)
 
-    # ── Line count mismatch check ─────────────────────────────────────────────
+    # â”€â”€ Line count mismatch check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     n_po = len(packet.po_lines)
     n_inv = len(packet.inv_lines)
     n_pl = len(packet.pl_lines)
@@ -621,6 +648,7 @@ def run_audit(
                 "Supplier must re-issue documents so all three have identical "
                 "line-item counts."
             ),
+            category="DETERMINISTIC_CONFLICT",
         )
 
     weights_inv: list[list[float]] = []
@@ -640,16 +668,16 @@ def run_audit(
         cartons_inv.append(inv.ctns)
         cartons_pl.append(pl.ctns)
 
-        # ── Rule 1: HS root ─────────────────────────────────────────────────
+        # â”€â”€ Rule 1: HS root â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _rule1_hs_root(state, i, po.hts, inv.hsn)
 
-        # ── Rule 2: Unit price & line math ──────────────────────────────────
+        # â”€â”€ Rule 2: Unit price & line math â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _rule2_unit_price(state, i, po.price, inv.rate, inv.qty, inv.line_total)
 
-        # ── Rule 3: Quantity / open balance ─────────────────────────────────
+        # â”€â”€ Rule 3: Quantity / open balance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _rule3_qty_balance(state, i, po.open, inv.qty, tolerance_pct)
 
-        # ── Rule 4: Weights & per-line cartons ──────────────────────────────
+        # â”€â”€ Rule 4: Weights & per-line cartons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _rule4_weights_cartons(
             state, i,
             inv.net_wt_kg, inv.gross_wt_kg,
@@ -657,12 +685,12 @@ def run_audit(
             inv.ctns, pl.ctns,
         )
 
-    # ── Rule 4: Total carton parity ─────────────────────────────────────────
+    # â”€â”€ Rule 4: Total carton parity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     total_inv = sum(cartons_inv)
     total_pl = sum(cartons_pl)
     _rule4_total_cartons(state, total_inv, total_pl)
 
-    # ── MID code ────────────────────────────────────────────────────────────
+    # â”€â”€ MID code â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     mid_code = generate_cbp_mid(
         country_iso=meta.exporter_country_iso,
         company_name=meta.exporter_name,
@@ -670,10 +698,15 @@ def run_audit(
         city=meta.exporter_city,
     )
 
-    # ── Summary ─────────────────────────────────────────────────────────────
+    # â”€â”€ Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     crit_count = sum(1 for it in state.items if it.sev == Severity.crit)
     warn_count = sum(1 for it in state.items if it.sev == Severity.warn)
-    status = "BLOCKED" if crit_count > 0 else "CLEAR"
+    if crit_count > 0:
+        status: AuditOverallStatus = "ACTION_REQUIRED"
+    elif warn_count > 0:
+        status: AuditOverallStatus = "CLEARED_WITH_EXCEPTIONS"
+    else:
+        status: AuditOverallStatus = "VERIFIED_CLEAN"
     
     sorted_items = sorted(state.items, key=lambda x: 0 if x.sev == Severity.crit else 1)
 
@@ -691,7 +724,7 @@ def run_audit(
                 open=p.open,
                 price=p.price,
             )
-            for p in packet.po_lines[:n]  # sliced to n — guaranteed length match
+            for p in packet.po_lines[:n]  # sliced to n â€” guaranteed length match
         ],
         inv_lines=[
             InvLineOut(
@@ -699,6 +732,7 @@ def run_audit(
                 hsn=inv.hsn,
                 qty=inv.qty,
                 rate=inv.rate,
+                amount=getattr(inv, "line_total", None),
             )
             for inv in packet.inv_lines[:n]  # sliced to n — guaranteed length match
         ],
@@ -724,10 +758,10 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
     Build a sabotaged shipment packet that replicates every error scenario
     embedded in the portgate.html golden dataset:
 
-    ERR-01 — HS root clash on Line 1 (6205.20 vs 6109.10)
-    ERR-02 — Unit price overcharge on Line 2 ($6.40 vs $6.00)
-    ERR-03 — Weight inversion + carton drift on Line 3
-    WARN-01 — Over-quantity within tolerance on Line 2 (2,050 vs 2,000 @ ±5%)
+    ERR-01 â€” HS root clash on Line 1 (6205.20 vs 6109.10)
+    ERR-02 â€” Unit price overcharge on Line 2 ($6.40 vs $6.00)
+    ERR-03 â€” Weight inversion + carton drift on Line 3
+    WARN-01 â€” Over-quantity within tolerance on Line 2 (2,050 vs 2,000 @ Â±5%)
     """
     from schemas import (
         ExtractedMetadata,
@@ -796,7 +830,7 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
     inv_lines = [
         ExtractedInvLine(
             desc="100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-            hsn="6205.20.00",           # ← ERR-01: should be 6109.10.00
+            hsn="6205.20.00",           # â† ERR-01: should be 6109.10.00
             qty=2000,
             rate=4.50,
             line_total=9000.00,
@@ -807,8 +841,8 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
         ExtractedInvLine(
             desc="LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
             hsn="6106.10.00",
-            qty=2050,                   # ← WARN-01: +2.5% over 2,000 open
-            rate=6.40,                  # ← ERR-02: should be 6.00
+            qty=2050,                   # â† WARN-01: +2.5% over 2,000 open
+            rate=6.40,                  # â† ERR-02: should be 6.00
             line_total=13120.00,
             net_wt_kg=410.0,
             gross_wt_kg=450.0,
@@ -820,9 +854,9 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
             qty=1000,
             rate=11.00,
             line_total=11000.00,
-            net_wt_kg=680.0,            # ← ERR-03: net > gross (physically impossible)
+            net_wt_kg=680.0,            # â† ERR-03: net > gross (physically impossible)
             gross_wt_kg=620.0,
-            ctns=30,                    # ← ERR-03: carton drift (PL has 38)
+            ctns=30,                    # â† ERR-03: carton drift (PL has 38)
         ),
     ]
 
@@ -841,7 +875,7 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
         ),
         ExtractedPLLine(
             desc="FLEECE PULLOVER HOODIE HEAVY GREY XL",
-            ctns=38,                    # ← ERR-03: 38 vs invoice's 30
+            ctns=38,                    # â† ERR-03: 38 vs invoice's 30
             net_wt_kg=580.0,
             gross_wt_kg=620.0,
         ),
@@ -860,7 +894,7 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("PortGate Compliance Engine — Mock Self-Test")
+    print("PortGate Compliance Engine â€” Mock Self-Test")
     print("=" * 60)
 
     packet = _build_mock_packet()
@@ -884,23 +918,16 @@ if __name__ == "__main__":
         print(f"  [OK] {p}")
 
 
-# app/linter.py
-from typing import List
-from models import (
-    AuditOverallStatus,
-    AuditResponse,
-    AuditSummary,
-    DiscrepancyItem,
-    ShipmentPacket,
-)
+# ---------------------------------------------------------------------------
+# Deterministic Audit Engine for models.ShipmentPacket (used by tests & packet API)
+# ---------------------------------------------------------------------------
+
+def _clean_digits(val: str | None) -> str:
+    return re.sub(r"\D", "", str(val or ""))
 
 
-def _clean_digits(code: str) -> str:
-    return "".join(ch for ch in (code or "") if ch.isdigit())
-
-
-def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
-    findings: List[DiscrepancyItem] = []
+def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
+    findings: List[m.DiscrepancyItem] = []
     inv = packet.commercial_invoice
     pl = packet.packing_list
     po = packet.buyer_po
@@ -913,7 +940,7 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
     if inv.total_cartons_declared != pl.total_cartons:
         diff = abs(inv.total_cartons_declared - pl.total_cartons)
         findings.append(
-            DiscrepancyItem(
+            m.DiscrepancyItem(
                 id="DISC-CARTONS",
                 rule_id="RULE-D01-CARTON-SYNC",
                 category="DETERMINISTIC_CONFLICT",
@@ -938,10 +965,10 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
             )
         )
 
-    # Rule D2: Physical Weight Inversion (Net Weight > Gross Weight)
+    # Rule D2: Physical Weight Inversion (Net Weight >= Gross Weight)
     if pl.total_net_weight_kg >= pl.total_gross_weight_kg:
         findings.append(
-            DiscrepancyItem(
+            m.DiscrepancyItem(
                 id="DISC-WEIGHT-INV",
                 rule_id="RULE-D02-WEIGHT-PHYSICS",
                 category="DETERMINISTIC_CONFLICT",
@@ -967,7 +994,7 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
     # Rule D3: Invoice vs Packing List Gross Weight Drift
     if abs(inv.total_gross_weight_kg - pl.total_gross_weight_kg) > 0.5:
         findings.append(
-            DiscrepancyItem(
+            m.DiscrepancyItem(
                 id="DISC-GROSS-SYNC",
                 rule_id="RULE-D03-GROSS-WT-SYNC",
                 category="DETERMINISTIC_CONFLICT",
@@ -996,7 +1023,7 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
             pl_item = pl.items[idx]
             if inv_item.uom.upper() != pl_item.uom.upper():
                 findings.append(
-                    DiscrepancyItem(
+                    m.DiscrepancyItem(
                         id=f"DISC-UOM-{inv_item.line_no}",
                         rule_id="RULE-D04-UOM-CONSISTENCY",
                         category="DETERMINISTIC_CONFLICT",
@@ -1039,7 +1066,7 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
                 sign = "+" if total_impact >= 0 else "-"
                 impact_str = f"{sign}${abs(total_impact):,.2f}"
                 findings.append(
-                    DiscrepancyItem(
+                    m.DiscrepancyItem(
                         id=f"DISC-PRICE-{inv_item.line_no}",
                         rule_id="RULE-V01-PO-PRICE-VARIANCE",
                         category="COMMERCIAL_VARIANCE",
@@ -1070,7 +1097,7 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
                 qty_diff_pct = ((inv_item.quantity - po_item.quantity) / po_item.quantity) * 100.0
                 if abs(qty_diff_pct) > po.quantity_tolerance_pct:
                     findings.append(
-                        DiscrepancyItem(
+                        m.DiscrepancyItem(
                             id=f"DISC-QTY-{inv_item.line_no}",
                             rule_id="RULE-V02-PO-QTY-TOLERANCE",
                             category="COMMERCIAL_VARIANCE",
@@ -1098,12 +1125,12 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
             # TIER 3: COMPLIANCE ADVISORIES (HSN/HTS Root & Conditional Tax Route)
             # =========================================================================
 
-            # Rule C1: 6-Digit WCO HS Subheading Root Divergence (Advisory — PO is not legal authority)
+            # Rule C1: 6-Digit WCO HS Subheading Root Divergence
             inv_hsn_root = _clean_digits(inv_item.hsn_code)[:6]
             po_hts_root = _clean_digits(po_item.hts_code)[:6]
             if inv_hsn_root and po_hts_root and inv_hsn_root != po_hts_root:
                 findings.append(
-                    DiscrepancyItem(
+                    m.DiscrepancyItem(
                         id=f"DISC-HS-{inv_item.line_no}",
                         rule_id="RULE-C01-WCO-HS6-DIVERGENCE",
                         category="COMPLIANCE_ADVISORY",
@@ -1131,7 +1158,7 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
     # Rule C2: Conditional Indian Export GST Route Check (LUT Bond vs. IGST Payment)
     if inv.export_tax_route == "LUT_BOND" and not (inv.lut_arn_number and inv.lut_arn_number.strip()):
         findings.append(
-            DiscrepancyItem(
+            m.DiscrepancyItem(
                 id="DISC-LUT-ARN",
                 rule_id="RULE-C02-EXPORT-GST-ROUTE",
                 category="COMPLIANCE_ADVISORY",
@@ -1160,13 +1187,13 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
     advisory_count = sum(1 for f in findings if f.category == "COMPLIANCE_ADVISORY")
     unresolved_count = sum(1 for f in findings if f.resolution_state == "UNRESOLVED")
 
-    status: AuditOverallStatus = "VERIFIED_CLEAN"
+    status: m.AuditOverallStatus = "VERIFIED_CLEAN"
     if unresolved_count > 0:
         status = "ACTION_REQUIRED"
     elif len(findings) > 0:
         status = "CLEARED_WITH_EXCEPTIONS"
 
-    summary = AuditSummary(
+    summary = m.AuditSummary(
         status=status,
         audit_mode="3_WAY_FULL" if po is not None else "2_WAY_INVOICE_PL",
         total_findings=len(findings),
@@ -1176,4 +1203,6 @@ def run_deterministic_audit(packet: ShipmentPacket) -> AuditResponse:
         unresolved_count=unresolved_count,
     )
 
-    return AuditResponse(packet=packet, summary=summary, discrepancies=findings)
+    return m.AuditResponse(packet=packet, summary=summary, discrepancies=findings)
+
+
