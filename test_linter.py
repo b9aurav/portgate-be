@@ -1,6 +1,6 @@
 # test_linter.py
 import json
-from models import (
+from app.schemas.domain import (
     ShipmentPacket,
     BuyerPO,
     POLineItem,
@@ -9,7 +9,7 @@ from models import (
     PackingList,
     PackingListCartonGroup,
 )
-from linter import run_deterministic_audit
+from app.services.linter import run_deterministic_audit
 
 
 def build_test_packet(include_po: bool = True, tax_route: str = "LUT_BOND") -> ShipmentPacket:
