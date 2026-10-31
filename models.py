@@ -1,5 +1,5 @@
 # app/models.py
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 FindingCategory = Literal[
@@ -122,6 +122,13 @@ class DiscrepancyItem(BaseModel):
     resolution_note: Optional[str] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[str] = None
+    # Compatibility fields for DocumentViewer & legacy components
+    sev: Optional[str] = None
+    cells: Optional[List[str]] = None
+    locs: Optional[List[List[str]]] = None
+    body: Optional[str] = None
+    impact: Optional[str] = None
+    fix: Optional[str] = None
 
 
 class AuditSummary(BaseModel):
@@ -133,9 +140,25 @@ class AuditSummary(BaseModel):
     commercial_variances: int
     compliance_advisories: int
     unresolved_count: int
+    # Optional counts for backwards compatibility with legacy AuditSummary
+    critical_count: Optional[int] = 0
+    warning_count: Optional[int] = 0
+    passed_count: Optional[int] = 0
 
 
 class AuditResponse(BaseModel):
+    session_token: str = ""
+    revision_number: int = 1
     packet: ShipmentPacket
     summary: AuditSummary
     discrepancies: List[DiscrepancyItem]
+    # Compatibility & Document Inspector helper fields
+    shipment_ref: str = "SHP-2026-8841"
+    mid_code: str = ""
+    metadata: Optional[Dict[str, Any]] = None
+    po_lines: List[Dict[str, Any]] = Field(default_factory=list)
+    inv_lines: List[Dict[str, Any]] = Field(default_factory=list)
+    weights: Dict[str, Any] = Field(default_factory=dict)
+    cartons: Dict[str, Any] = Field(default_factory=dict)
+    items: List[DiscrepancyItem] = Field(default_factory=list)
+    passed: List[str] = Field(default_factory=list)

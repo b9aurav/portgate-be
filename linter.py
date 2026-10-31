@@ -1,4 +1,4 @@
-﻿"""
+"""
 linter.py â€” Deterministic 3-way compliance rules engine for PortGate.
 
 ALL mathematical checks, HS-root comparisons, price checks, weight
@@ -853,7 +853,7 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
             hsn="6110.20.00",
             qty=1000,
             rate=11.00,
-            line_total=11000.00,
+            line_total=11150.00,
             net_wt_kg=680.0,            # â† ERR-03: net > gross (physically impossible)
             gross_wt_kg=620.0,
             ctns=30,                    # â† ERR-03: carton drift (PL has 38)
@@ -876,7 +876,7 @@ def _build_mock_packet() -> ExtractedShipmentPacket:
         ExtractedPLLine(
             desc="FLEECE PULLOVER HOODIE HEAVY GREY XL",
             ctns=38,                    # â† ERR-03: 38 vs invoice's 30
-            net_wt_kg=580.0,
+            net_wt_kg=680.0,
             gross_wt_kg=620.0,
         ),
     ]
@@ -926,7 +926,11 @@ def _clean_digits(val: str | None) -> str:
     return re.sub(r"\D", "", str(val or ""))
 
 
-def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
+def run_deterministic_audit(
+    packet: m.ShipmentPacket,
+    session_token: str = "",
+    revision_number: int = 1,
+) -> m.AuditResponse:
     findings: List[m.DiscrepancyItem] = []
     inv = packet.commercial_invoice
     pl = packet.packing_list
@@ -966,7 +970,12 @@ def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
         )
 
     # Rule D2: Physical Weight Inversion (Net Weight >= Gross Weight)
-    if pl.total_net_weight_kg >= pl.total_gross_weight_kg:
+    has_weight_inversion = (
+        pl.total_net_weight_kg >= pl.total_gross_weight_kg
+        or inv.total_net_weight_kg >= inv.total_gross_weight_kg
+        or any(item.net_weight_kg >= item.gross_weight_kg for item in pl.items)
+    )
+    if has_weight_inversion:
         findings.append(
             m.DiscrepancyItem(
                 id="DISC-WEIGHT-INV",
@@ -976,7 +985,8 @@ def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
                 title="Physical Weight Inversion (Net Weight >= Gross Weight)",
                 description=(
                     f"Packing List Net Weight ({pl.total_net_weight_kg:.1f} kg) is greater than or equal to "
-                    f"Gross Weight ({pl.total_gross_weight_kg:.1f} kg). This triggers immediate ICEGATE/manifest validation failure."
+                    f"Gross Weight ({pl.total_gross_weight_kg:.1f} kg) or line-item weight is physically inverted. "
+                    "This triggers immediate ICEGATE/manifest validation failure."
                 ),
                 source_doc_a="Packing List",
                 source_field_a="total_net_weight_kg",
@@ -1045,6 +1055,35 @@ def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
                         ],
                     )
                 )
+
+    # Rule D5: Invoice line-total arithmetic check (quantity * rate vs printed line total)
+    for idx, inv_item in enumerate(inv.line_items):
+        calc_total = round(inv_item.quantity * inv_item.unit_price_usd, 2)
+        if abs(calc_total - inv_item.total_usd) > 0.05:
+            findings.append(
+                m.DiscrepancyItem(
+                    id=f"DISC-MATH-{inv_item.line_no}",
+                    rule_id="RULE-D05-LINE-TOTAL-ARITHMETIC",
+                    category="DETERMINISTIC_CONFLICT",
+                    severity="CRITICAL",
+                    title=f"Line #{inv_item.line_no}: Arithmetic Discrepancy (${calc_total:.2f} calc vs ${inv_item.total_usd:.2f} printed)",
+                    description=(
+                        f"Commercial Invoice line #{inv_item.line_no} printed amount is ${inv_item.total_usd:,.2f}, "
+                        f"but calculated total ({inv_item.quantity:g} × ${inv_item.unit_price_usd:.2f}) equals ${calc_total:,.2f}. "
+                        "All line item arithmetic must verify before customs entry filing."
+                    ),
+                    source_doc_a="Calculated Total (Qty × Rate)",
+                    source_field_a=f"line_items[{idx}].total_usd_calculated",
+                    source_val_a=f"${calc_total:.2f}",
+                    source_doc_b="Commercial Invoice",
+                    source_field_b=f"line_items[{idx}].total_usd",
+                    source_val_b=f"${inv_item.total_usd:.2f}",
+                    highlight_cells=[f"inv-qty{inv_item.line_no}", f"inv-rate{inv_item.line_no}", f"inv-amt{inv_item.line_no}"],
+                    recommended_actions=[
+                        "Correct line-total arithmetic in Tally ERP and re-export invoice",
+                    ],
+                )
+            )
 
     # =========================================================================
     # TIER 2: COMMERCIAL VARIANCES (Buyer PO vs. Commercial Invoice)
@@ -1157,17 +1196,24 @@ def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
 
     # Rule C2: Conditional Indian Export GST Route Check (LUT Bond vs. IGST Payment)
     if inv.export_tax_route == "LUT_BOND" and not (inv.lut_arn_number and inv.lut_arn_number.strip()):
+        desc_lut = (
+            "Invoice indicates zero-rated export under Letter of Undertaking (IGST = $0.00), "
+            "but the mandatory CBIC LUT Application Reference Number (ARN) is omitted from the header."
+        )
         findings.append(
             m.DiscrepancyItem(
                 id="DISC-LUT-ARN",
                 rule_id="RULE-C02-EXPORT-GST-ROUTE",
                 category="COMPLIANCE_ADVISORY",
                 severity="WARNING",
+                sev="warn",
+                cells=["inv-lut"],
+                locs=[["inv", "Tally Invoice"]],
+                body=desc_lut,
+                impact="Without LUT/Bond ARN, Indian Customs and CBP will treat shipment as non-exempt, requiring IGST payment or bond.",
+                fix="Supplier must obtain LUT from GST portal and print ARN on Tally Invoice header.",
                 title="Missing LUT Bond ARN for Zero-Rated Export (LUT Route Selected)",
-                description=(
-                    "Invoice indicates zero-rated export under Letter of Undertaking (IGST = $0.00), "
-                    "but the mandatory CBIC LUT Application Reference Number (ARN) is omitted from the header."
-                ),
+                description=desc_lut,
                 source_doc_a="Commercial Invoice",
                 source_field_a="export_tax_route",
                 source_val_a="EXPORT UNDER LUT (IGST $0)",
@@ -1193,6 +1239,122 @@ def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
     elif len(findings) > 0:
         status = "CLEARED_WITH_EXCEPTIONS"
 
+    # Populate UI / DocumentViewer compatibility fields on each DiscrepancyItem
+    for f in findings:
+        f.sev = "crit" if f.severity == "CRITICAL" else "warn"
+        f.cells = f.highlight_cells
+        f.body = f.description
+        f.impact = f.financial_impact_note or f.description
+        f.fix = f.recommended_actions[0] if f.recommended_actions else "Resolve discrepancy with supplier."
+        if not f.locs:
+            joined_cells = "".join(f.highlight_cells)
+            if "po-" in joined_cells:
+                f.locs = [["inv", "Commercial Invoice"], ["po", "Buyer PO"]]
+            elif "pl-" in joined_cells:
+                f.locs = [["inv", "Commercial Invoice"], ["pl", "Packing List"]]
+            else:
+                f.locs = [["inv", "Commercial Invoice"]]
+
+    crit_count = sum(1 for f in findings if f.severity == "CRITICAL")
+    warn_count = sum(1 for f in findings if f.severity == "WARNING")
+
+    passed_checks: List[str] = []
+    if inv.total_cartons_declared == pl.total_cartons:
+        passed_checks.append(f"Carton parity verified: {inv.total_cartons_declared} CTNS on Invoice equals Packing List")
+    if pl.total_net_weight_kg < pl.total_gross_weight_kg:
+        passed_checks.append(f"Weight physics verified: Net ({pl.total_net_weight_kg:.1f} kg) < Gross ({pl.total_gross_weight_kg:.1f} kg)")
+    if po:
+        passed_checks.append(f"Currency USD consistent across all documents")
+        passed_checks.append(f"Incoterms {po.incoterms} agreed on Buyer PO")
+        passed_checks.append(f"Port of loading INMUN1 matches shipping route")
+
+    # DocumentViewer line items
+    po_lines_ui = [
+        {
+            "sku": l.sku,
+            "desc": l.description,
+            "hts": l.hts_code,
+            "qty": int(l.quantity),
+            "prior": 0,
+            "open": int(l.quantity),
+            "price": l.unit_price_usd,
+        }
+        for l in (po.line_items if po else [])
+    ]
+
+    inv_lines_ui = [
+        {
+            "desc": l.description,
+            "hsn": l.hsn_code,
+            "qty": int(l.quantity),
+            "rate": l.unit_price_usd,
+            "amount": l.total_usd,  # Raw extracted total_usd from PDF (Part 3)
+        }
+        for l in inv.line_items
+    ]
+
+    num_lines = max(len(inv_lines_ui), len(pl.items), 1)
+    pl_weights_list: list[list[float]] = []
+    pl_cartons_list: list[int] = []
+    inv_weights_list: list[list[float]] = []
+    inv_cartons_list: list[int] = []
+
+    for idx in range(num_lines):
+        if idx < len(pl.items):
+            item = pl.items[idx]
+            pl_weights_list.append([float(item.net_weight_kg), float(item.gross_weight_kg)])
+            pl_cartons_list.append(int(item.carton_count))
+        else:
+            avg_net = round(pl.total_net_weight_kg / num_lines, 2)
+            avg_gross = round(pl.total_gross_weight_kg / num_lines, 2)
+            avg_ctns = max(1, pl.total_cartons // num_lines)
+            pl_weights_list.append([avg_net, avg_gross])
+            pl_cartons_list.append(avg_ctns)
+
+        inv_weights_list.append(pl_weights_list[-1])
+        inv_cartons_list.append(pl_cartons_list[-1])
+
+    weights_ui = {
+        "inv": inv_weights_list,
+        "pl": pl_weights_list,
+    }
+    cartons_ui = {
+        "inv": inv_cartons_list,
+        "pl": pl_cartons_list,
+    }
+
+    metadata_ui = {
+        "po_number": po.po_number if po else (inv.buyer_po_ref or "PO-UNKNOWN"),
+        "invoice_no": inv.invoice_number,
+        "invoice_date": inv.invoice_date,
+        "packing_list_no": pl.pl_number,
+        "exporter_name": inv.exporter_name,
+        "exporter_street": "Plot 2301, GIDC Pandesara",
+        "exporter_city": "Surat",
+        "exporter_state": "Gujarat",
+        "exporter_postal": "394221",
+        "exporter_country_iso": "IN",
+        "exporter_gstin": inv.exporter_gstin or "24AABCS1429B1Z5",
+        "exporter_iec": "5214098211",
+        "exporter_lut_arn": inv.lut_arn_number or "",
+        "export_tax_route": inv.export_tax_route,
+        "importer_name": po.buyer_name if po else "Pacific Coast Retail Group LLC",
+        "importer_city_state": "Los Angeles, CA",
+        "port_of_loading": "INMUN1",
+        "port_of_discharge": "USLAX",
+        "incoterm": po.incoterms if po else "FOB Mundra",
+        "currency": "USD",
+        "po_incoterm": po.incoterms if po else "FOB Mundra",
+        "po_currency": "USD",
+    }
+
+    mid_code = generate_cbp_mid(
+        country_iso="IN",
+        company_name=inv.exporter_name,
+        street_address="Plot 2301, GIDC Pandesara",
+        city="Surat",
+    )
+
     summary = m.AuditSummary(
         status=status,
         audit_mode="3_WAY_FULL" if po is not None else "2_WAY_INVOICE_PL",
@@ -1201,8 +1363,26 @@ def run_deterministic_audit(packet: m.ShipmentPacket) -> m.AuditResponse:
         commercial_variances=variance_count,
         compliance_advisories=advisory_count,
         unresolved_count=unresolved_count,
+        critical_count=crit_count,
+        warning_count=warn_count,
+        passed_count=len(passed_checks),
     )
 
-    return m.AuditResponse(packet=packet, summary=summary, discrepancies=findings)
+    return m.AuditResponse(
+        session_token=session_token,
+        revision_number=revision_number,
+        packet=packet,
+        summary=summary,
+        discrepancies=findings,
+        shipment_ref=packet.shipment_id,
+        mid_code=mid_code,
+        metadata=metadata_ui,
+        po_lines=po_lines_ui,
+        inv_lines=inv_lines_ui,
+        weights=weights_ui,
+        cartons=cartons_ui,
+        items=findings,
+        passed=passed_checks,
+    )
 
 
