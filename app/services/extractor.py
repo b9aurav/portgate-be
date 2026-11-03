@@ -288,6 +288,9 @@ def extracted_to_shipment_packet(
                 if line.line_total is not None
                 else (line.qty or 0) * (line.rate or 0.0)
             ),
+            carton_count=int(getattr(line, "ctns", 0) or 0) if getattr(line, "ctns", None) is not None else None,
+            net_weight_kg=float(getattr(line, "net_wt_kg", 0.0) or 0.0) if getattr(line, "net_wt_kg", None) is not None else None,
+            gross_weight_kg=float(getattr(line, "gross_wt_kg", 0.0) or 0.0) if getattr(line, "gross_wt_kg", None) is not None else None,
         )
         for idx, line in enumerate(extracted.inv_lines or [])
     ]
@@ -295,6 +298,15 @@ def extracted_to_shipment_packet(
     tax_route = getattr(meta, "export_tax_route", "LUT_BOND") or "LUT_BOND"
     if str(tax_route).upper() not in ("LUT_BOND", "IGST_PAYMENT"):
         tax_route = "LUT_BOND"
+
+    # Robust Commercial Invoice carton total resolution
+    inv_lines_ctns_sum = sum(int(getattr(l, "ctns", 0) or 0) for l in (extracted.inv_lines or []))
+    meta_inv_ctns = getattr(meta, "total_cartons_declared", None)
+    total_inv_cartons = (
+        int(meta_inv_ctns)
+        if (meta_inv_ctns is not None and int(meta_inv_ctns) > 0)
+        else inv_lines_ctns_sum
+    )
 
     commercial_invoice = CommercialInvoice(
         invoice_number=meta.invoice_no or "INV-UNKNOWN",
@@ -304,7 +316,7 @@ def extracted_to_shipment_packet(
         export_tax_route=tax_route,
         lut_arn_number=meta.exporter_lut_arn or None,
         buyer_po_ref=meta.po_number or "PO-UNKNOWN",
-        total_cartons_declared=sum(int(getattr(l, "ctns", 0) or 0) for l in (extracted.inv_lines or [])),
+        total_cartons_declared=total_inv_cartons,
         total_net_weight_kg=sum(float(getattr(l, "net_wt_kg", 0.0) or 0.0) for l in (extracted.inv_lines or [])),
         total_gross_weight_kg=sum(float(getattr(l, "gross_wt_kg", 0.0) or 0.0) for l in (extracted.inv_lines or [])),
         total_invoice_value_usd=sum(float(getattr(l, "line_total", 0.0) or 0.0) for l in (extracted.inv_lines or [])),
@@ -328,10 +340,19 @@ def extracted_to_shipment_packet(
         for idx, line in enumerate(extracted.pl_lines or [])
     ]
 
+    # Robust Packing List carton total resolution
+    pl_lines_ctns_sum = sum(p.carton_count for p in pl_items)
+    meta_pl_ctns = getattr(meta, "total_cartons", None)
+    total_pl_cartons = (
+        int(meta_pl_ctns)
+        if (meta_pl_ctns is not None and int(meta_pl_ctns) > 0)
+        else (pl_lines_ctns_sum or 100)
+    )
+
     packing_list = PackingList(
         pl_number=meta.packing_list_no or "PL-UNKNOWN",
         invoice_ref=meta.invoice_no or "INV-UNKNOWN",
-        total_cartons=sum(p.carton_count for p in pl_items) or 100,
+        total_cartons=total_pl_cartons,
         total_quantity=sum(p.total_quantity for p in pl_items),
         total_net_weight_kg=sum(float(getattr(l, "net_wt_kg", 0.0) or 0.0) for l in (extracted.pl_lines or [])),
         total_gross_weight_kg=sum(float(getattr(l, "gross_wt_kg", 0.0) or 0.0) for l in (extracted.pl_lines or [])),
@@ -379,6 +400,8 @@ def build_mock_packet() -> ExtractedShipmentPacket:
         currency="USD",
         po_incoterm="FOB Mundra",
         po_currency="USD",
+        total_cartons_declared=100,
+        total_cartons=110,
     )
 
     po_lines = [
@@ -490,6 +513,11 @@ def build_mock_revised_packet(packet: ShipmentPacket) -> ShipmentPacket:
 
     # 1. Carton count sync: invoice matches packing list
     inv.total_cartons_declared = pl.total_cartons
+    for idx, inv_item in enumerate(inv.line_items):
+        if idx < len(pl.items):
+            inv_item.carton_count = pl.items[idx].carton_count
+            inv_item.net_weight_kg = pl.items[idx].net_weight_kg
+            inv_item.gross_weight_kg = pl.items[idx].gross_weight_kg
 
     # 2. Weight physics fix: ensure net < gross
     if pl.total_net_weight_kg >= pl.total_gross_weight_kg:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -86,6 +86,14 @@ class ExtractedMetadata(BaseModel):
     shipment_ref: str = Field(
         default="SHP-2026-8841",
         description="Internal shipment reference, e.g. SHP-2026-8841",
+    )
+    total_cartons_declared: Optional[int] = Field(
+        default=None,
+        description="Total cartons explicitly declared on the Commercial Invoice header or summary box, e.g. 100",
+    )
+    total_cartons: Optional[int] = Field(
+        default=None,
+        description="Total cartons explicitly printed on the Packing List header or summary box, e.g. 110",
     )
 
     # Exporter (Indian side)

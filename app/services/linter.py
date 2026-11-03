@@ -85,17 +85,31 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
         )
 
     # 2. RULE-D02-WEIGHT-PHYSICS (CRITICAL)
-    has_weight_inversion = (
-        pl.total_net_weight_kg >= pl.total_gross_weight_kg
-        or inv.total_net_weight_kg >= inv.total_gross_weight_kg
-        or any(item.net_weight_kg >= item.gross_weight_kg for item in pl.items)
-    )
-    if has_weight_inversion:
+    inverted_pl_items = [
+        item for item in pl.items
+        if item.net_weight_kg >= item.gross_weight_kg
+    ]
+    header_pl_inverted = pl.total_net_weight_kg >= pl.total_gross_weight_kg
+    header_inv_inverted = inv.total_net_weight_kg >= inv.total_gross_weight_kg
+
+    if inverted_pl_items:
+        first = inverted_pl_items[0]
+        line_num = first.line_no
+        item_desc = first.description
+        net_val = first.net_weight_kg
+        gross_val = first.gross_weight_kg
+        diff = net_val - gross_val
+
         desc = (
-            f"Packing List Net Weight ({pl.total_net_weight_kg:.1f} kg) is greater than or equal to "
-            f"Gross Weight ({pl.total_gross_weight_kg:.1f} kg) or line-item weight is physically inverted. "
-            "Net weight cannot exceed gross weight."
+            f"Line #{line_num} ({item_desc}): Inverted weights declared on Packing List — "
+            f"Net Weight ({net_val:.1f} kg) exceeds Gross Weight ({gross_val:.1f} kg) by {diff:.1f} kg. "
+            f"Net cargo weight cannot physically exceed carton gross weight. "
+            f"(Total header weights: Net {pl.total_net_weight_kg:.1f} kg vs Gross {pl.total_gross_weight_kg:.1f} kg)."
         )
+        title = f"Line #{line_num}: Physical Weight Inversion (Net {net_val:.1f} kg > Gross {gross_val:.1f} kg)"
+        fix = f"Re-scale Line #{line_num} cartons and swap inverted Net ({net_val:.1f} kg) vs Gross ({gross_val:.1f} kg) weights."
+        cells = [f"pl-net{line_num}", f"pl-gross{line_num}", f"inv-net{line_num}", f"inv-gross{line_num}"]
+
         findings.append(
             DiscrepancyItem(
                 id="DISC-WEIGHT-INV",
@@ -103,22 +117,62 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
                 category="DETERMINISTIC_CONFLICT",
                 severity="CRITICAL",
                 sev="crit",
-                title="Physical Weight Inversion (Net Weight >= Gross Weight)",
+                title=title,
                 description=desc,
                 body=desc,
                 impact="Immediate ICEGATE and CBP automated manifest rejection due to physical impossibility.",
-                fix="Re-scale shipment cartons and swap inverted Net/Gross weight columns.",
+                fix=fix,
                 source_doc_a="Packing List",
-                source_field_a="total_net_weight_kg",
-                source_val_a=f"{pl.total_net_weight_kg:.1f} KG",
+                source_field_a=f"Line #{line_num} Net Weight",
+                source_val_a=f"{net_val:.1f} KG",
                 source_doc_b="Packing List",
-                source_field_b="total_gross_weight_kg",
-                source_val_b=f"{pl.total_gross_weight_kg:.1f} KG",
-                highlight_cells=["pl-net-wt", "pl-gross-wt"],
-                cells=["pl-net-wt", "pl-gross-wt"],
-                locs=[["pl", "Packing List"]],
+                source_field_b=f"Line #{line_num} Gross Weight",
+                source_val_b=f"{gross_val:.1f} KG",
+                highlight_cells=cells,
+                cells=cells,
+                locs=[["pl", "Packing List"], ["inv", "Commercial Invoice"]],
                 recommended_actions=[
-                    "Swap inverted Net/Gross weight columns in Packing List",
+                    f"Correct Line #{line_num} Net ({net_val:.1f} kg) and Gross ({gross_val:.1f} kg) weights in Packing List",
+                    "Perform certified scale weighment before port gate-in",
+                ],
+            )
+        )
+    elif header_pl_inverted or header_inv_inverted:
+        doc_name = "Packing List" if header_pl_inverted else "Commercial Invoice"
+        net_wt = pl.total_net_weight_kg if header_pl_inverted else inv.total_net_weight_kg
+        gross_wt = pl.total_gross_weight_kg if header_pl_inverted else inv.total_gross_weight_kg
+        diff = net_wt - gross_wt
+        desc = (
+            f"{doc_name} Total Net Weight ({net_wt:.1f} kg) is greater than or equal to "
+            f"Total Gross Weight ({gross_wt:.1f} kg) by {diff:.1f} kg. Net cargo weight cannot exceed gross weight."
+        )
+        title = f"Total Weight Inversion (Net {net_wt:.1f} kg >= Gross {gross_wt:.1f} kg)"
+        fix = f"Re-scale shipment cartons and swap inverted Net ({net_wt:.1f} kg) vs Gross ({gross_wt:.1f} kg) weights."
+        cells = ["pl-net-wt", "pl-gross-wt", "inv-net", "inv-gross"]
+
+        findings.append(
+            DiscrepancyItem(
+                id="DISC-WEIGHT-INV",
+                rule_id="RULE-D02-WEIGHT-PHYSICS",
+                category="DETERMINISTIC_CONFLICT",
+                severity="CRITICAL",
+                sev="crit",
+                title=title,
+                description=desc,
+                body=desc,
+                impact="Immediate ICEGATE and CBP automated manifest rejection due to physical impossibility.",
+                fix=fix,
+                source_doc_a=doc_name,
+                source_field_a="total_net_weight_kg",
+                source_val_a=f"{net_wt:.1f} KG",
+                source_doc_b=doc_name,
+                source_field_b="total_gross_weight_kg",
+                source_val_b=f"{gross_wt:.1f} KG",
+                highlight_cells=cells,
+                cells=cells,
+                locs=[["pl", "Packing List"], ["inv", "Commercial Invoice"]],
+                recommended_actions=[
+                    "Swap inverted Net/Gross weight header totals",
                     "Perform certified scale weighment before port gate-in",
                 ],
             )

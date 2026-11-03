@@ -152,27 +152,95 @@ def build_audit_response(
         for l in inv.line_items
     ]
 
-    # Weights and cartons array formatting with safe padding
+    # Weights and cartons array formatting with safe padding across arbitrary datasets
     num_lines = max(len(inv_lines_ui), len(pl.items), 1)
+
+    # 1. Build pl_cartons_list and pl_weights_list
     pl_weights_list: list[list[float]] = []
     pl_cartons_list: list[int] = []
+
+    if len(pl.items) >= num_lines:
+        for item in pl.items[:num_lines]:
+            pl_weights_list.append([float(item.net_weight_kg), float(item.gross_weight_kg)])
+            pl_cartons_list.append(int(item.carton_count))
+    elif len(pl.items) > 0:
+        # All pl items exist, pad remaining slots up to num_lines with 0
+        for item in pl.items:
+            pl_weights_list.append([float(item.net_weight_kg), float(item.gross_weight_kg)])
+            pl_cartons_list.append(int(item.carton_count))
+        for _ in range(num_lines - len(pl.items)):
+            pl_weights_list.append([0.0, 0.0])
+            pl_cartons_list.append(0)
+    else:
+        # No pl items, distribute header totals across num_lines
+        share_net = round(pl.total_net_weight_kg / num_lines, 2)
+        share_gross = round(pl.total_gross_weight_kg / num_lines, 2)
+        share_ctns = pl.total_cartons // num_lines
+        for idx in range(num_lines):
+            if idx == num_lines - 1:
+                rem_ctns = max(0, pl.total_cartons - sum(pl_cartons_list))
+                rem_net = max(0.0, round(pl.total_net_weight_kg - sum(w[0] for w in pl_weights_list), 2))
+                rem_gross = max(0.0, round(pl.total_gross_weight_kg - sum(w[1] for w in pl_weights_list), 2))
+                pl_cartons_list.append(rem_ctns)
+                pl_weights_list.append([rem_net, rem_gross])
+            else:
+                pl_cartons_list.append(share_ctns)
+                pl_weights_list.append([share_net, share_gross])
+
+    # Mathematical reconciliation for Packing List:
+    if pl.total_cartons > 0 and len(pl_cartons_list) > 0:
+        pl_diff = pl.total_cartons - sum(pl_cartons_list)
+        if pl_diff != 0:
+            pl_cartons_list[-1] = max(0, pl_cartons_list[-1] + pl_diff)
+
+    # 2. Build inv_cartons_list and inv_weights_list
     inv_weights_list: list[list[float]] = []
     inv_cartons_list: list[int] = []
 
-    for idx in range(num_lines):
-        if idx < len(pl.items):
-            item = pl.items[idx]
-            pl_weights_list.append([float(item.net_weight_kg), float(item.gross_weight_kg)])
-            pl_cartons_list.append(int(item.carton_count))
-        else:
-            avg_net = round(pl.total_net_weight_kg / num_lines, 2)
-            avg_gross = round(pl.total_gross_weight_kg / num_lines, 2)
-            avg_ctns = max(1, pl.total_cartons // num_lines)
-            pl_weights_list.append([avg_net, avg_gross])
-            pl_cartons_list.append(avg_ctns)
+    has_inv_line_cartons = any(
+        getattr(l, "carton_count", None) is not None and l.carton_count > 0
+        for l in inv.line_items
+    )
 
-        inv_weights_list.append(pl_weights_list[-1])
-        inv_cartons_list.append(pl_cartons_list[-1])
+    if has_inv_line_cartons:
+        for idx in range(num_lines):
+            inv_item = inv.line_items[idx] if idx < len(inv.line_items) else None
+            if inv_item and inv_item.carton_count is not None and inv_item.carton_count > 0:
+                inv_cartons_list.append(int(inv_item.carton_count))
+            else:
+                inv_cartons_list.append(0)
+
+            if inv_item and inv_item.net_weight_kg is not None and inv_item.gross_weight_kg is not None and (inv_item.net_weight_kg > 0 or inv_item.gross_weight_kg > 0):
+                inv_weights_list.append([float(inv_item.net_weight_kg), float(inv_item.gross_weight_kg)])
+            else:
+                inv_weights_list.append(pl_weights_list[idx] if idx < len(pl_weights_list) else [0.0, 0.0])
+    else:
+        # No per-line cartons on invoice; allocate inv.total_cartons_declared
+        if inv.total_cartons_declared > 0:
+            if inv.total_cartons_declared == pl.total_cartons and len(pl_cartons_list) == num_lines:
+                # If totals match, preserve the exact line carton distribution from packing list
+                inv_cartons_list = list(pl_cartons_list)
+            else:
+                # Distribute inv.total_cartons_declared across lines
+                share = inv.total_cartons_declared // num_lines
+                for idx in range(num_lines):
+                    if idx == num_lines - 1:
+                        rem = max(0, inv.total_cartons_declared - sum(inv_cartons_list))
+                        inv_cartons_list.append(rem)
+                    else:
+                        inv_cartons_list.append(share)
+        else:
+            inv_cartons_list = [0] * num_lines
+
+        # Invoice weights fallback to pl_weights_list
+        inv_weights_list = [list(w) for w in pl_weights_list]
+
+    # Mathematical reconciliation for Commercial Invoice:
+    # Guarantees inv_cartons_list sum strictly matches inv.total_cartons_declared for any input dataset
+    if inv.total_cartons_declared > 0 and len(inv_cartons_list) > 0:
+        inv_diff = inv.total_cartons_declared - sum(inv_cartons_list)
+        if inv_diff != 0:
+            inv_cartons_list[-1] = max(0, inv_cartons_list[-1] + inv_diff)
 
     weights_ui = {
         "inv": inv_weights_list,
@@ -206,6 +274,8 @@ def build_audit_response(
         "currency": "USD",
         "po_incoterm": po.incoterms if po else "FOB Mundra",
         "po_currency": "USD",
+        "total_cartons_declared": inv.total_cartons_declared,
+        "total_cartons": pl.total_cartons,
     }
 
     mid_code = generate_cbp_mid(

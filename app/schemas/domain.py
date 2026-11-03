@@ -56,6 +56,9 @@ class InvoiceLineItem(BaseModel):
     unit_price_usd: float
     total_usd: float
     match_confidence: Literal["HIGH", "MEDIUM", "REVIEW_REQUIRED"] = "HIGH"
+    carton_count: Optional[int] = None
+    net_weight_kg: Optional[float] = None
+    gross_weight_kg: Optional[float] = None
 
 
 class CommercialInvoice(BaseModel):
