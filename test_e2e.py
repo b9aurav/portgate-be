@@ -5,11 +5,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from app.api.routes import audit, get_session, patch_discrepancy, re_audit
+from app.api.routes import audit, get_session, list_shipments, patch_discrepancy, re_audit
 from app.schemas.api import PatchResolutionRequest
 from fastapi import UploadFile
 
 async def run_direct_tests():
+    print("0. Testing list_shipments()...")
+    initial_shipments = list_shipments()
+    assert len(initial_shipments) >= 1, "Expected at least 1 seeded shipment"
+    print(f"   Shipments listed: {len(initial_shipments)}, first token={initial_shipments[0].session_token}")
+
     print("1. Testing audit(mock=True)...")
     dummy_pdf = b"%PDF-1.4 dummy"
     po_f = UploadFile(filename="po.pdf", file=io.BytesIO(dummy_pdf))
@@ -95,6 +100,15 @@ async def run_direct_tests():
     assert reaudit_res.summary.unresolved_count < audit_res.summary.unresolved_count
     print(f"   Re-audit completed: rev={reaudit_res.revision_number}, status={reaudit_res.summary.status}")
     print(f"   Unresolved discrepancies reduced to: {reaudit_res.summary.unresolved_count}")
+
+    # 5. Test delete_shipment
+    from app.api.routes import delete_shipment
+    from app.services.session_store import session_store
+    print(f"\n5. Testing delete_shipment(token='{token}')...")
+    del_res = delete_shipment(token)
+    assert del_res["status"] == "success"
+    assert session_store.get_session(token) is None
+    print(f"   Successfully deleted session '{token}'!")
 
     print("\n=======================================================")
     print(" ALL BACKEND SERVICE & ROUTE HANDLER TESTS PASSED 100% ")

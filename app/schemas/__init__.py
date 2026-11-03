@@ -22,6 +22,7 @@ from app.schemas.api import (
     DiscrepancyItem,
     AuditSummary,
     AuditResponse,
+    ShipmentListItem,
     PatchResolutionRequest,
 )
 
@@ -45,6 +46,7 @@ __all__ = [
     "DiscrepancyItem",
     "AuditSummary",
     "AuditResponse",
+    "ShipmentListItem",
     "PatchResolutionRequest",
 ]
 

@@ -12,12 +12,13 @@ Routes:
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app import config
-from app.schemas.api import AuditResponse, PatchResolutionRequest
+from app.schemas.api import AuditResponse, PatchResolutionRequest, ShipmentListItem
 from app.services.extractor import (
     build_mock_packet,
     build_mock_revised_packet,
@@ -74,6 +75,32 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
+# Multi-Shipment Queue
+# ---------------------------------------------------------------------------
+@router.get(
+    "/api/shipments",
+    response_model=list[ShipmentListItem],
+    summary="List all active shipment audit sessions for Buyer Queue Dashboard",
+)
+def list_shipments() -> list[ShipmentListItem]:
+    return session_store.list_shipments()
+
+
+@router.delete(
+    "/api/shipments/{token}",
+    summary="Delete a shipment audit session",
+)
+def delete_shipment(token: str):
+    success = session_store.delete_session(token)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment session '{token}' not found",
+        )
+    return {"status": "success", "deleted_token": token}
+
+
+# ---------------------------------------------------------------------------
 # 1. POST /api/audit (Buyer 3-Document Upload -> Generates Dynamic Session)
 # ---------------------------------------------------------------------------
 @router.post(
@@ -95,18 +122,28 @@ async def audit(
     if mock:
         logger.info("Mock mode requested: generating test packet")
         extracted = build_mock_packet()
-        packet = extracted_to_shipment_packet(extracted, tolerance_pct=tolerance_pct)
     else:
         try:
             logger.info("Extracting 3 PDFs with Gemini multimodal ingestion")
             extracted = extract_shipment_packet(po_bytes, inv_bytes, pl_bytes)
-            packet = extracted_to_shipment_packet(extracted, tolerance_pct=tolerance_pct)
         except Exception as exc:
             logger.exception("PDF extraction failed")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"PDF extraction failed: {str(exc)}",
             ) from exc
+
+    # Generate dynamic shipment ID for newly uploaded packet
+    po_num = extracted.metadata.po_number or "PO"
+    inv_num = extracted.metadata.invoice_no or "INV"
+    dyn_num = (abs(hash(f"{po_num}:{inv_num}:{secrets.token_hex(2)}")) % 9000) + 1000
+    dynamic_shipment_id = f"SHP-2026-{dyn_num}"
+
+    packet = extracted_to_shipment_packet(
+        extracted,
+        tolerance_pct=tolerance_pct,
+        shipment_id=dynamic_shipment_id,
+    )
 
     # Run deterministic compliance engine
     findings, passed_checks = run_deterministic_lint(packet)

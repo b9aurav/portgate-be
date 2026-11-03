@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app import config
-from app.schemas.api import AuditResponse, PatchResolutionRequest
+from app.schemas.api import AuditResponse, PatchResolutionRequest, ShipmentListItem
 
 logger = logging.getLogger("portgate.sessions")
 
@@ -23,37 +23,79 @@ logger = logging.getLogger("portgate.sessions")
 class SessionStore:
     """
     Manages in-memory audit sessions and file bytes with state preservation
-    and optional disk persistence.
+    and disk persistence across server restarts.
     """
 
     def __init__(self, persist_dir: Optional[Path] = None) -> None:
         self._sessions: Dict[str, AuditResponse] = {}
         self._files: Dict[str, Dict[str, Any]] = {}
         self._persist_dir = persist_dir or config.SESSIONS_PERSIST_DIR
-        self._seed_default_demo_session()
+        self._persist_file = self._persist_dir / "sessions_store.json"
 
-    def _seed_default_demo_session(self) -> None:
-        """Seeds canonical demo session so test links work immediately."""
-        token = "shreeji-po-9921"
+        # Attempt to load persisted sessions; seed canonical demo if missing
+        loaded = self._load_from_disk()
+        if not loaded or "shreeji-po-9921" not in self._sessions:
+            self._seed_default_demo_sessions()
+            self._save_to_disk()
+
+    def _save_to_disk(self) -> None:
+        """Persists all current sessions to a local JSON file."""
+        try:
+            self._persist_dir.mkdir(parents=True, exist_ok=True)
+            dump_data = {
+                tok: session.model_dump(mode="json")
+                for tok, session in self._sessions.items()
+            }
+            self._persist_file.write_text(json.dumps(dump_data, indent=2), encoding="utf-8")
+            logger.debug("Persisted %d sessions to disk at %s", len(dump_data), self._persist_file)
+        except Exception as exc:
+            logger.warning("Failed to persist sessions to disk: %s", exc)
+
+    def _load_from_disk(self) -> bool:
+        """Loads sessions from local JSON file if present."""
+        if not self._persist_file.exists():
+            return False
+        try:
+            raw = self._persist_file.read_text(encoding="utf-8")
+            if not raw.strip():
+                return False
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                return False
+            for tok, s_dict in data.items():
+                self._sessions[tok] = AuditResponse.model_validate(s_dict)
+            logger.info("Loaded %d sessions from disk (%s)", len(self._sessions), self._persist_file)
+            return len(self._sessions) > 0
+        except Exception as exc:
+            logger.warning("Failed to load sessions from %s: %s", self._persist_file, exc)
+            return False
+
+    def _seed_default_demo_sessions(self) -> None:
+        """Seeds canonical demo sessions so dashboard has rich data out-of-the-box."""
+        now_iso = datetime.now(timezone.utc).isoformat()
         try:
             from app.services.extractor import build_mock_packet, extracted_to_shipment_packet
             from app.services.linter import run_deterministic_audit
 
-            packet = extracted_to_shipment_packet(build_mock_packet())
-            default_audit = run_deterministic_audit(
-                packet=packet,
-                session_token=token,
-                revision_number=1,
-            )
-            self._sessions[token] = default_audit
-            self._files[token] = {
-                "po": b"",
-                "inv": b"",
-                "pl": b"",
-                "mock": True,
-                "tolerance_pct": 5.0,
-            }
-            logger.info("Seeded canonical demo session '%s'", token)
+            # 1. Canonical Shreeji Textiles (Action Required, Rev 1)
+            token = "shreeji-po-9921"
+            if token not in self._sessions:
+                packet = extracted_to_shipment_packet(build_mock_packet())
+                default_audit = run_deterministic_audit(
+                    packet=packet,
+                    session_token=token,
+                    revision_number=1,
+                )
+                default_audit.updated_at = now_iso
+                self._sessions[token] = default_audit
+                self._files[token] = {
+                    "po": b"",
+                    "inv": b"",
+                    "pl": b"",
+                    "mock": True,
+                    "tolerance_pct": 5.0,
+                }
+                logger.info("Seeded canonical demo session '%s'", token)
         except Exception as exc:
             logger.warning("Failed to seed default session: %s", exc)
 
@@ -69,6 +111,7 @@ class SessionStore:
         session_token = token or secrets.token_urlsafe(10)
         audit.session_token = session_token
         audit.revision_number = 1
+        audit.updated_at = datetime.now(timezone.utc).isoformat()
         self._sessions[session_token] = audit
 
         if files:
@@ -76,6 +119,7 @@ class SessionStore:
         else:
             self._files.setdefault(session_token, {})
 
+        self._save_to_disk()
         logger.info(
             "Created session %s (status=%s, findings=%d)",
             session_token,
@@ -111,6 +155,7 @@ class SessionStore:
 
         new_audit.session_token = token
         new_audit.revision_number = new_revision
+        new_audit.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Preserve Buyer Sign-Offs across revisions
         if old_audit:
@@ -155,6 +200,7 @@ class SessionStore:
             stored.update(new_files)
 
         self._sessions[token] = new_audit
+        self._save_to_disk()
         logger.info(
             "Session %s updated to rev v%d (status=%s, unresolved=%d)",
             token,
@@ -218,7 +264,9 @@ class SessionStore:
             if unresolved > 0
             else ("CLEARED_WITH_EXCEPTIONS" if session.discrepancies else "VERIFIED_CLEAN")
         )
+        session.updated_at = datetime.now(timezone.utc).isoformat()
 
+        self._save_to_disk()
         logger.info(
             "Discrepancy %s updated: state=%s unresolved=%d",
             discrepancy_id,
@@ -226,6 +274,85 @@ class SessionStore:
             unresolved,
         )
         return session
+
+    def delete_session(self, token: str) -> bool:
+        """
+        Deletes a session from in-memory cache and persisted storage on disk.
+        """
+        deleted = False
+        if token in self._sessions:
+            del self._sessions[token]
+            deleted = True
+        if token in self._files:
+            del self._files[token]
+            deleted = True
+        if deleted:
+            self._save_to_disk()
+            logger.info("Session %s deleted", token)
+        return deleted
+
+    def list_shipments(self) -> list[ShipmentListItem]:
+        """
+        Generates multi-shipment summary objects for the Queue Dashboard table.
+        Sorts unresolved shipments first, ordered by most recent updated_at.
+        """
+        results: list[ShipmentListItem] = []
+        for token, s in self._sessions.items():
+            packet = s.packet
+            meta = s.metadata or {}
+
+            unresolved_items = [
+                d for d in s.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
+            ]
+            unresolved_count = len(unresolved_items)
+            det_count = sum(1 for d in unresolved_items if d.category == "DETERMINISTIC_CONFLICT")
+            com_count = sum(1 for d in unresolved_items if d.category == "COMMERCIAL_VARIANCE")
+            adv_count = sum(1 for d in unresolved_items if d.category == "COMPLIANCE_ADVISORY")
+
+            # Granular status calculation
+            if unresolved_count == 0:
+                status_str = "CLEARED_WITH_EXCEPTIONS" if s.discrepancies else "VERIFIED_CLEAN"
+            elif any(d.resolution_state == "REVISION_REQUESTED" for d in s.discrepancies):
+                status_str = "AWAITING_SUPPLIER_REVISION"
+            elif det_count == 0 and (com_count > 0 or adv_count > 0):
+                status_str = "BUYER_REVIEW"
+            else:
+                status_str = "ACTION_REQUIRED"
+
+            shipment_id = packet.shipment_id or s.shipment_ref or "SHP-UNKNOWN"
+            corridor = packet.corridor or f"{meta.get('port_of_loading', 'INMUN1')} -> {meta.get('port_of_discharge', 'USLAX')}"
+            po_number = packet.buyer_po.po_number if packet.buyer_po else meta.get("po_number", "PO-UNKNOWN")
+            invoice_number = packet.commercial_invoice.invoice_number if packet.commercial_invoice else meta.get("invoice_no", "INV-UNKNOWN")
+            exporter_name = packet.commercial_invoice.exporter_name if packet.commercial_invoice else meta.get("exporter_name", "Exporter")
+            buyer_name = packet.buyer_po.buyer_name if packet.buyer_po else meta.get("importer_name", "Pacific Coast Retail Group LLC")
+            total_usd = float(packet.commercial_invoice.total_invoice_value_usd if packet.commercial_invoice else 0.0)
+
+            updated_at = s.updated_at or meta.get("invoice_date", datetime.now(timezone.utc).isoformat())
+
+            results.append(
+                ShipmentListItem(
+                    session_token=token,
+                    shipment_id=shipment_id,
+                    corridor=corridor,
+                    po_number=po_number,
+                    invoice_number=invoice_number,
+                    exporter_name=exporter_name,
+                    buyer_name=buyer_name,
+                    total_invoice_usd=total_usd,
+                    revision_number=s.revision_number,
+                    status=status_str,
+                    unresolved_count=unresolved_count,
+                    deterministic_conflict_count=det_count,
+                    commercial_variance_count=com_count,
+                    compliance_advisory_count=adv_count,
+                    updated_at=updated_at,
+                )
+            )
+
+        # Sort: unresolved shipments first, then newest updated_at first
+        results.sort(key=lambda x: str(x.updated_at), reverse=True)
+        results.sort(key=lambda x: 0 if x.unresolved_count > 0 else 1)
+        return results
 
     @property
     def raw_sessions(self) -> Dict[str, AuditResponse]:

@@ -85,6 +85,27 @@ class AuditResponse(BaseModel):
     cartons: Dict[str, Any] = Field(default_factory=dict)
     items: List[DiscrepancyItem] = Field(default_factory=list)
     passed: List[str] = Field(default_factory=list)
+    updated_at: Optional[str] = None
+
+
+class ShipmentListItem(BaseModel):
+    """Summary item for the multi-shipment dashboard queue."""
+
+    session_token: str
+    shipment_id: str
+    corridor: str
+    po_number: str
+    invoice_number: str
+    exporter_name: str
+    buyer_name: str
+    total_invoice_usd: float
+    revision_number: int
+    status: str  # "ACTION_REQUIRED", "BUYER_REVIEW", "AWAITING_SUPPLIER_REVISION", "CLEARED_WITH_EXCEPTIONS", "VERIFIED_CLEAN"
+    unresolved_count: int
+    deterministic_conflict_count: int
+    commercial_variance_count: int
+    compliance_advisory_count: int
+    updated_at: str
 
 
 class PatchResolutionRequest(BaseModel):
