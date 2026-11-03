@@ -157,7 +157,10 @@ class SessionStore:
         new_audit.revision_number = new_revision
         new_audit.updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Preserve Buyer Sign-Offs across revisions
+        auto_resolved_ids: list[str] = []
+        auto_resolved_items: list[Any] = []
+
+        # Preserve Buyer Sign-Offs across revisions and track auto-resolved items
         if old_audit:
             for new_d in new_audit.discrepancies:
                 for old_d in old_audit.discrepancies:
@@ -173,7 +176,49 @@ class SessionStore:
                         new_d.resolved_at = old_d.resolved_at
                         break
 
-            # Also mirror preserved resolutions to items list
+            # Identify discrepancies from previous revision that are now FIXED by supplier
+            for old_d in old_audit.discrepancies:
+                # Check if this discrepancy is still triggered in new_audit
+                is_still_triggered = any(
+                    new_d.id == old_d.id or new_d.rule_id == old_d.rule_id
+                    for new_d in new_audit.discrepancies
+                )
+
+                if not is_still_triggered:
+                    auto_resolved_ids.append(old_d.id)
+                    fixed_item = old_d.model_copy(deep=True)
+                    fixed_item.resolution_state = "CLEARED_BY_REVISION"
+                    fixed_item.resolution_reason_chip = f"Cleared by Supplier Upload (Rev v{new_revision})"
+                    fixed_item.resolved_by = f"Supplier Upload (Rev v{new_revision})"
+                    fixed_item.resolved_at = datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+                    # Extract specific fixed values for the note
+                    rule_key = (old_d.rule_id or old_d.id or "").upper()
+                    if "CARTON" in rule_key:
+                        inv_ctns = sum(new_audit.cartons.get("inv", [])) if isinstance(new_audit.cartons, dict) else 0
+                        pl_ctns = sum(new_audit.cartons.get("pl", [])) if isinstance(new_audit.cartons, dict) else 0
+                        if inv_ctns and pl_ctns:
+                            fixed_item.resolution_note = f"Fixed in Rev v{new_revision} ({inv_ctns} CTNS = {pl_ctns} CTNS)"
+                        else:
+                            fixed_item.resolution_note = f"Fixed in Rev v{new_revision}: Total carton count reconciled"
+                    elif "WEIGHT" in rule_key:
+                        fixed_item.resolution_note = f"Fixed in Rev v{new_revision}: Tare & gross weights re-weighed (Net <= Gross verified)"
+                    elif "MATH" in rule_key or "PRICE" in rule_key:
+                        fixed_item.resolution_note = f"Fixed in Rev v{new_revision}: Unit rates and extended line arithmetic reconciled"
+                    elif "HSN" in rule_key or "HS" in rule_key:
+                        fixed_item.resolution_note = f"Fixed in Rev v{new_revision}: 6-digit HS root harmonized with Buyer PO schedule"
+                    else:
+                        fixed_item.resolution_note = f"Fixed in Rev v{new_revision}: Re-audited and reconciled in revised documents"
+
+                    auto_resolved_items.append(fixed_item)
+                elif old_d.resolution_state == "CLEARED_BY_REVISION":
+                    # Retain earlier auto-resolved items from v2, v3
+                    auto_resolved_items.append(old_d.model_copy(deep=True))
+
+            # Include auto_resolved_items in discrepancies & items for the Resolved tab
+            new_audit.discrepancies.extend(auto_resolved_items)
+
+            # Mirror preserved resolutions to items list
             for it in new_audit.items:
                 for d in new_audit.discrepancies:
                     if it.id == d.id:
@@ -183,6 +228,14 @@ class SessionStore:
                         it.resolved_by = d.resolved_by
                         it.resolved_at = d.resolved_at
                         break
+
+            # Also ensure all auto_resolved_items are present in items list
+            item_ids = {it.id for it in new_audit.items}
+            for auto_item in auto_resolved_items:
+                if auto_item.id not in item_ids:
+                    new_audit.items.append(auto_item)
+
+        new_audit.auto_resolved_in_latest_rev = auto_resolved_ids
 
         # Recompute summary with preserved resolutions
         unresolved = sum(

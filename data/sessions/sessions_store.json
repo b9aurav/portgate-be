@@ -754,7 +754,8 @@
       "Incoterms FOB Mundra agreed on Buyer PO",
       "Port of loading INMUN1 matches shipping route"
     ],
-    "updated_at": "2026-11-03T15:11:54.455371+00:00"
+    "updated_at": "2026-11-03T15:11:54.455371+00:00",
+    "auto_resolved_in_latest_rev": []
   },
   "Mp5JyACNrORlhQ": {
     "session_token": "Mp5JyACNrORlhQ",
@@ -1136,1146 +1137,8 @@
       "Incoterms FOB Mundra agreed on Buyer PO",
       "Port of loading INMUN1 matches shipping route"
     ],
-    "updated_at": "2026-11-03T16:45:14.802970+00:00"
-  },
-  "-UtUpR4PVD7pMA": {
-    "session_token": "-UtUpR4PVD7pMA",
-    "revision_number": 2,
-    "packet": {
-      "shipment_id": "SHP-2026-9414",
-      "corridor": "INMUN1 -> USLAX",
-      "buyer_po": {
-        "po_number": "PO-PCR-45012",
-        "buyer_name": "Pacific Coast Retail Group LLC",
-        "po_date": "14-Oct-2026",
-        "incoterms": "FOB Mundra",
-        "quantity_tolerance_pct": 5.0,
-        "line_items": [
-          {
-            "line_no": 1,
-            "sku": "PCR-M-TEE-NVY-L",
-            "description": "Men's 100% Combed Cotton Crewneck Tee (Knitted)",
-            "hts_code": "6109.10.0012",
-            "quantity": 2000.0,
-            "uom": "PCS",
-            "unit_price_usd": 4.5,
-            "total_usd": 9000.0
-          },
-          {
-            "line_no": 2,
-            "sku": "PCR-W-POLO-WHT-M",
-            "description": "Women's Pique Polo Shirt",
-            "hts_code": "6106.10.0010",
-            "quantity": 5000.0,
-            "uom": "PCS",
-            "unit_price_usd": 6.0,
-            "total_usd": 30000.0
-          },
-          {
-            "line_no": 3,
-            "sku": "PCR-H-HOOD-GRY-XL",
-            "description": "Heavyweight Fleece Pullover Hoodie",
-            "hts_code": "6110.20.2079",
-            "quantity": 1000.0,
-            "uom": "PCS",
-            "unit_price_usd": 11.0,
-            "total_usd": 11000.0
-          }
-        ],
-        "total_po_value_usd": 50000.0
-      },
-      "commercial_invoice": {
-        "invoice_number": "SHR/EXP/26-27/0412",
-        "invoice_date": "14-Oct-2026",
-        "exporter_name": "Shreeji Textiles & Apparel Pvt. Ltd.",
-        "exporter_gstin": "24AABCS1429B1Z5",
-        "export_tax_route": "LUT_BOND",
-        "lut_arn_number": "AD240426009182Z",
-        "igst_amount_usd": 0.0,
-        "buyer_po_ref": "PO-PCR-45012",
-        "total_cartons_declared": 110,
-        "total_net_weight_kg": 1310.0,
-        "total_gross_weight_kg": 1360.0,
-        "total_invoice_value_usd": 32300.0,
-        "line_items": [
-          {
-            "line_no": 1,
-            "po_line_ref": 1,
-            "description": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-            "hsn_code": "6109.10.00",
-            "quantity": 2000.0,
-            "uom": "PCS",
-            "unit_price_usd": 4.5,
-            "total_usd": 9000.0,
-            "match_confidence": "HIGH",
-            "carton_count": 40,
-            "net_weight_kg": 380.0,
-            "gross_weight_kg": 420.0
-          },
-          {
-            "line_no": 2,
-            "po_line_ref": 2,
-            "description": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
-            "hsn_code": "6106.10.00",
-            "quantity": 2050.0,
-            "uom": "PCS",
-            "unit_price_usd": 6.0,
-            "total_usd": 12300.0,
-            "match_confidence": "HIGH",
-            "carton_count": 30,
-            "net_weight_kg": 410.0,
-            "gross_weight_kg": 450.0
-          },
-          {
-            "line_no": 3,
-            "po_line_ref": 3,
-            "description": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
-            "hsn_code": "6110.20.00",
-            "quantity": 1000.0,
-            "uom": "PCS",
-            "unit_price_usd": 11.0,
-            "total_usd": 11000.0,
-            "match_confidence": "HIGH",
-            "carton_count": 40,
-            "net_weight_kg": 520.0,
-            "gross_weight_kg": 490.0
-          }
-        ]
-      },
-      "packing_list": {
-        "pl_number": "SHR/PL/0412",
-        "invoice_ref": "SHR/EXP/26-27/0412",
-        "total_cartons": 110,
-        "total_quantity": 5050.0,
-        "total_net_weight_kg": 1310.0,
-        "total_gross_weight_kg": 1360.0,
-        "items": [
-          {
-            "line_no": 1,
-            "description": "Cartons 1-40: 100% COTTON MENS ROUND NECK T-SHIRT",
-            "carton_count": 40,
-            "total_quantity": 2000.0,
-            "uom": "PCS",
-            "net_weight_kg": 380.0,
-            "gross_weight_kg": 420.0
-          },
-          {
-            "line_no": 2,
-            "description": "Cartons 41-70: LADIES COTTON PIQUE COLLAR T-SHIRT",
-            "carton_count": 30,
-            "total_quantity": 2050.0,
-            "uom": "PCS",
-            "net_weight_kg": 410.0,
-            "gross_weight_kg": 450.0
-          },
-          {
-            "line_no": 3,
-            "description": "Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE",
-            "carton_count": 40,
-            "total_quantity": 1000.0,
-            "uom": "PCS",
-            "net_weight_kg": 441.0,
-            "gross_weight_kg": 490.0
-          }
-        ]
-      }
-    },
-    "summary": {
-      "status": "ACTION_REQUIRED",
-      "audit_mode": "3_WAY_FULL",
-      "ruleset_version": "IN-US-2026.4",
-      "total_findings": 1,
-      "deterministic_conflicts": 0,
-      "commercial_variances": 1,
-      "compliance_advisories": 0,
-      "unresolved_count": 1,
-      "critical_count": 0,
-      "warning_count": 1,
-      "passed_count": 5
-    },
-    "discrepancies": [
-      {
-        "id": "DISC-QTY-2",
-        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "WARNING",
-        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
-        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].quantity",
-        "source_val_a": "5000 PCS",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].quantity",
-        "source_val_b": "2050 PCS",
-        "highlight_cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Approve as authorized split/short shipment",
-          "Request supplier correction if quantity was mis-keyed"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "impact": "Split shipment overage beyond agreed order quantity.",
-        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
-      }
-    ],
-    "shipment_ref": "SHP-2026-9414",
-    "mid_code": "INSHRTEX2301SUR",
-    "metadata": {
-      "po_number": "PO-PCR-45012",
-      "invoice_no": "SHR/EXP/26-27/0412",
-      "invoice_date": "14-Oct-2026",
-      "packing_list_no": "SHR/PL/0412",
-      "exporter_name": "Shreeji Textiles & Apparel Pvt. Ltd.",
-      "exporter_street": "Plot 2301, GIDC Pandesara",
-      "exporter_city": "Surat",
-      "exporter_state": "Gujarat",
-      "exporter_postal": "394221",
-      "exporter_country_iso": "IN",
-      "exporter_gstin": "24AABCS1429B1Z5",
-      "exporter_iec": "5214098211",
-      "exporter_lut_arn": "AD240426009182Z",
-      "export_tax_route": "LUT_BOND",
-      "importer_name": "Pacific Coast Retail Group LLC",
-      "importer_city_state": "Los Angeles, CA",
-      "port_of_loading": "INMUN1",
-      "port_of_discharge": "USLAX",
-      "incoterm": "FOB Mundra",
-      "currency": "USD",
-      "po_incoterm": "FOB Mundra",
-      "po_currency": "USD",
-      "total_cartons_declared": 110,
-      "total_cartons": 110
-    },
-    "po_lines": [
-      {
-        "sku": "PCR-M-TEE-NVY-L",
-        "desc": "Men's 100% Combed Cotton Crewneck Tee (Knitted)",
-        "hts": "6109.10.0012",
-        "qty": 2000,
-        "prior": 0,
-        "open": 2000,
-        "price": 4.5
-      },
-      {
-        "sku": "PCR-W-POLO-WHT-M",
-        "desc": "Women's Pique Polo Shirt",
-        "hts": "6106.10.0010",
-        "qty": 5000,
-        "prior": 0,
-        "open": 5000,
-        "price": 6.0
-      },
-      {
-        "sku": "PCR-H-HOOD-GRY-XL",
-        "desc": "Heavyweight Fleece Pullover Hoodie",
-        "hts": "6110.20.2079",
-        "qty": 1000,
-        "prior": 0,
-        "open": 1000,
-        "price": 11.0
-      }
-    ],
-    "inv_lines": [
-      {
-        "desc": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-        "hsn": "6109.10.00",
-        "qty": 2000,
-        "rate": 4.5,
-        "amount": 9000.0
-      },
-      {
-        "desc": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
-        "hsn": "6106.10.00",
-        "qty": 2050,
-        "rate": 6.0,
-        "amount": 12300.0
-      },
-      {
-        "desc": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
-        "hsn": "6110.20.00",
-        "qty": 1000,
-        "rate": 11.0,
-        "amount": 11000.0
-      }
-    ],
-    "weights": {
-      "inv": [
-        [
-          380.0,
-          420.0
-        ],
-        [
-          410.0,
-          450.0
-        ],
-        [
-          520.0,
-          490.0
-        ]
-      ],
-      "pl": [
-        [
-          380.0,
-          420.0
-        ],
-        [
-          410.0,
-          450.0
-        ],
-        [
-          441.0,
-          490.0
-        ]
-      ]
-    },
-    "cartons": {
-      "inv": [
-        40,
-        30,
-        40
-      ],
-      "pl": [
-        40,
-        30,
-        40
-      ]
-    },
-    "items": [
-      {
-        "id": "DISC-QTY-2",
-        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "WARNING",
-        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
-        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].quantity",
-        "source_val_a": "5000 PCS",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].quantity",
-        "source_val_b": "2050 PCS",
-        "highlight_cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Approve as authorized split/short shipment",
-          "Request supplier correction if quantity was mis-keyed"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "impact": "Split shipment overage beyond agreed order quantity.",
-        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
-      }
-    ],
-    "passed": [
-      "Carton parity verified: 110 CTNS on Invoice equals Packing List",
-      "Weight physics verified: Net (1310.0 kg) < Gross (1360.0 kg)",
-      "Currency USD consistent across all documents",
-      "Incoterms FOB Mundra agreed on Buyer PO",
-      "Port of loading INMUN1 matches shipping route"
-    ],
-    "updated_at": "2026-11-03T16:47:39.267125+00:00"
-  },
-  "PtxPNuiy67Pung": {
-    "session_token": "PtxPNuiy67Pung",
-    "revision_number": 1,
-    "packet": {
-      "shipment_id": "SHP-2026-7888",
-      "corridor": "INMUN1 -> USLAX",
-      "buyer_po": {
-        "po_number": "PO-PCR-45012",
-        "buyer_name": "Pacific Coast Retail Group LLC",
-        "po_date": "14-Oct-2026",
-        "incoterms": "FOB Mundra",
-        "quantity_tolerance_pct": 5.0,
-        "line_items": [
-          {
-            "line_no": 1,
-            "sku": "PCR-M-TEE-NVY-L",
-            "description": "Men's 100% Combed Cotton Crewneck Tee (Knitted)",
-            "hts_code": "6109.10.0012",
-            "quantity": 2000.0,
-            "uom": "PCS",
-            "unit_price_usd": 4.5,
-            "total_usd": 9000.0
-          },
-          {
-            "line_no": 2,
-            "sku": "PCR-W-POLO-WHT-M",
-            "description": "Women's Pique Polo Shirt",
-            "hts_code": "6106.10.0010",
-            "quantity": 5000.0,
-            "uom": "PCS",
-            "unit_price_usd": 6.0,
-            "total_usd": 30000.0
-          },
-          {
-            "line_no": 3,
-            "sku": "PCR-H-HOOD-GRY-XL",
-            "description": "Heavyweight Fleece Pullover Hoodie",
-            "hts_code": "6110.20.2079",
-            "quantity": 1000.0,
-            "uom": "PCS",
-            "unit_price_usd": 11.0,
-            "total_usd": 11000.0
-          }
-        ],
-        "total_po_value_usd": 50000.0
-      },
-      "commercial_invoice": {
-        "invoice_number": "SHR/EXP/26-27/0412",
-        "invoice_date": "14-Oct-2026",
-        "exporter_name": "Shreeji Textiles & Apparel Pvt. Ltd.",
-        "exporter_gstin": "24AABCS1429B1Z5",
-        "export_tax_route": "LUT_BOND",
-        "lut_arn_number": "AD240426009182Z",
-        "igst_amount_usd": 0.0,
-        "buyer_po_ref": "PO-PCR-45012",
-        "total_cartons_declared": 100,
-        "total_net_weight_kg": 1310.0,
-        "total_gross_weight_kg": 1360.0,
-        "total_invoice_value_usd": 33120.0,
-        "line_items": [
-          {
-            "line_no": 1,
-            "po_line_ref": 1,
-            "description": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-            "hsn_code": "6205.20.00",
-            "quantity": 2000.0,
-            "uom": "PCS",
-            "unit_price_usd": 4.5,
-            "total_usd": 9000.0,
-            "match_confidence": "HIGH",
-            "carton_count": 40,
-            "net_weight_kg": 380.0,
-            "gross_weight_kg": 420.0
-          },
-          {
-            "line_no": 2,
-            "po_line_ref": 2,
-            "description": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
-            "hsn_code": "6106.10.00",
-            "quantity": 2050.0,
-            "uom": "PCS",
-            "unit_price_usd": 6.4,
-            "total_usd": 13120.0,
-            "match_confidence": "HIGH",
-            "carton_count": 30,
-            "net_weight_kg": 410.0,
-            "gross_weight_kg": 450.0
-          },
-          {
-            "line_no": 3,
-            "po_line_ref": 3,
-            "description": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
-            "hsn_code": "6110.20.00",
-            "quantity": 1000.0,
-            "uom": "PCS",
-            "unit_price_usd": 11.0,
-            "total_usd": 11000.0,
-            "match_confidence": "HIGH",
-            "carton_count": 30,
-            "net_weight_kg": 520.0,
-            "gross_weight_kg": 490.0
-          }
-        ]
-      },
-      "packing_list": {
-        "pl_number": "SHR/PL/0412",
-        "invoice_ref": "SHR/EXP/26-27/0412",
-        "total_cartons": 110,
-        "total_quantity": 5050.0,
-        "total_net_weight_kg": 1310.0,
-        "total_gross_weight_kg": 1360.0,
-        "items": [
-          {
-            "line_no": 1,
-            "description": "Cartons 1-40: 100% COTTON MENS ROUND NECK T-SHIRT",
-            "carton_count": 40,
-            "total_quantity": 2000.0,
-            "uom": "PCS",
-            "net_weight_kg": 380.0,
-            "gross_weight_kg": 420.0
-          },
-          {
-            "line_no": 2,
-            "description": "Cartons 41-70: LADIES COTTON PIQUE COLLAR T-SHIRT",
-            "carton_count": 30,
-            "total_quantity": 2050.0,
-            "uom": "PCS",
-            "net_weight_kg": 410.0,
-            "gross_weight_kg": 450.0
-          },
-          {
-            "line_no": 3,
-            "description": "Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE",
-            "carton_count": 40,
-            "total_quantity": 1000.0,
-            "uom": "PCS",
-            "net_weight_kg": 520.0,
-            "gross_weight_kg": 490.0
-          }
-        ]
-      }
-    },
-    "summary": {
-      "status": "ACTION_REQUIRED",
-      "audit_mode": "3_WAY_FULL",
-      "ruleset_version": "IN-US-2026.4",
-      "total_findings": 5,
-      "deterministic_conflicts": 2,
-      "commercial_variances": 2,
-      "compliance_advisories": 1,
-      "unresolved_count": 5,
-      "critical_count": 3,
-      "warning_count": 2,
-      "passed_count": 4
-    },
-    "discrepancies": [
-      {
-        "id": "DISC-CARTONS",
-        "rule_id": "RULE-D01-CARTON-SYNC",
-        "category": "DETERMINISTIC_CONFLICT",
-        "severity": "CRITICAL",
-        "title": "Carton Count Mismatch (Invoice vs. Packing List)",
-        "description": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
-        "source_doc_a": "Commercial Invoice",
-        "source_field_a": "total_cartons_declared",
-        "source_val_a": "100 CTNS",
-        "source_doc_b": "Packing List",
-        "source_field_b": "total_cartons",
-        "source_val_b": "110 CTNS",
-        "highlight_cells": [
-          "inv-ctns",
-          "pl-ctns"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Verify physical warehouse tally sheet",
-          "Regenerate either Tally Invoice or Packing List so carton counts match"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "crit",
-        "cells": [
-          "inv-ctns",
-          "pl-ctns"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "pl",
-            "Packing List"
-          ]
-        ],
-        "body": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
-        "impact": "Mismatched carton counts trigger mandatory physical container exams and customs holds.",
-        "fix": "Regenerate invoice or packing list in exporter ERP so total carton count is identical."
-      },
-      {
-        "id": "DISC-WEIGHT-INV",
-        "rule_id": "RULE-D02-WEIGHT-PHYSICS",
-        "category": "DETERMINISTIC_CONFLICT",
-        "severity": "CRITICAL",
-        "title": "Line #3: Physical Weight Inversion (Net 520.0 kg > Gross 490.0 kg)",
-        "description": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
-        "source_doc_a": "Packing List",
-        "source_field_a": "Line #3 Net Weight",
-        "source_val_a": "520.0 KG",
-        "source_doc_b": "Packing List",
-        "source_field_b": "Line #3 Gross Weight",
-        "source_val_b": "490.0 KG",
-        "highlight_cells": [
-          "pl-net3",
-          "pl-gross3",
-          "inv-net3",
-          "inv-gross3"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Correct Line #3 Net (520.0 kg) and Gross (490.0 kg) weights in Packing List",
-          "Perform certified scale weighment before port gate-in"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "crit",
-        "cells": [
-          "pl-net3",
-          "pl-gross3",
-          "inv-net3",
-          "inv-gross3"
-        ],
-        "locs": [
-          [
-            "pl",
-            "Packing List"
-          ],
-          [
-            "inv",
-            "Commercial Invoice"
-          ]
-        ],
-        "body": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
-        "impact": "Immediate ICEGATE and CBP automated manifest rejection due to physical impossibility.",
-        "fix": "Re-scale Line #3 cartons and swap inverted Net (520.0 kg) vs Gross (490.0 kg) weights."
-      },
-      {
-        "id": "DISC-HS-1",
-        "rule_id": "RULE-C01-WCO-HS6-DIVERGENCE",
-        "category": "COMPLIANCE_ADVISORY",
-        "severity": "WARNING",
-        "title": "Line #1: 6-Digit HS Root Divergence (Invoice 620520 vs. PO 610910)",
-        "description": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
-        "source_doc_a": "Buyer PO (Commercial Ref)",
-        "source_field_a": "line_items[0].hts_code",
-        "source_val_a": "6109.10.0012",
-        "source_doc_b": "Commercial Invoice (Supplier HSN)",
-        "source_field_b": "line_items[0].hsn_code",
-        "source_val_b": "6205.20.00",
-        "highlight_cells": [
-          "po-hts1",
-          "inv-hsn1"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
-          "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-hts1",
-          "inv-hsn1"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
-        "impact": "Potential duty rate differential or customs entry reclassification by CBP.",
-        "fix": "Escalate to licensed US customs broker to verify proper classification."
-      },
-      {
-        "id": "DISC-PRICE-2",
-        "rule_id": "RULE-V01-PO-PRICE-VARIANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "CRITICAL",
-        "title": "Line #2: Unit Price Variance vs. Buyer PO (+6.7%)",
-        "description": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].unit_price_usd",
-        "source_val_a": "$6.00",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].unit_price_usd",
-        "source_val_b": "$6.40",
-        "highlight_cells": [
-          "po-price2",
-          "inv-rate2"
-        ],
-        "financial_impact_note": "Net invoice impact: +$820.00 USD across 2050 PCS",
-        "recommended_actions": [
-          "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
-          "If billing typo: Request Revised Tally Invoice at PO rate"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "crit",
-        "cells": [
-          "po-price2",
-          "inv-rate2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
-        "impact": "Commercial variance: +$820.00 USD across 2050 PCS.",
-        "fix": "If revised price was agreed: Accept Variance & attach PO Amendment. Otherwise request corrected invoice at PO rate."
-      },
-      {
-        "id": "DISC-QTY-2",
-        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "WARNING",
-        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
-        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].quantity",
-        "source_val_a": "5000 PCS",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].quantity",
-        "source_val_b": "2050 PCS",
-        "highlight_cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Approve as authorized split/short shipment",
-          "Request supplier correction if quantity was mis-keyed"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "impact": "Split shipment overage beyond agreed order quantity.",
-        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
-      }
-    ],
-    "shipment_ref": "SHP-2026-7888",
-    "mid_code": "INSHRTEX2301SUR",
-    "metadata": {
-      "po_number": "PO-PCR-45012",
-      "invoice_no": "SHR/EXP/26-27/0412",
-      "invoice_date": "14-Oct-2026",
-      "packing_list_no": "SHR/PL/0412",
-      "exporter_name": "Shreeji Textiles & Apparel Pvt. Ltd.",
-      "exporter_street": "Plot 2301, GIDC Pandesara",
-      "exporter_city": "Surat",
-      "exporter_state": "Gujarat",
-      "exporter_postal": "394221",
-      "exporter_country_iso": "IN",
-      "exporter_gstin": "24AABCS1429B1Z5",
-      "exporter_iec": "5214098211",
-      "exporter_lut_arn": "AD240426009182Z",
-      "export_tax_route": "LUT_BOND",
-      "importer_name": "Pacific Coast Retail Group LLC",
-      "importer_city_state": "Los Angeles, CA",
-      "port_of_loading": "INMUN1",
-      "port_of_discharge": "USLAX",
-      "incoterm": "FOB Mundra",
-      "currency": "USD",
-      "po_incoterm": "FOB Mundra",
-      "po_currency": "USD",
-      "total_cartons_declared": 100,
-      "total_cartons": 110
-    },
-    "po_lines": [
-      {
-        "sku": "PCR-M-TEE-NVY-L",
-        "desc": "Men's 100% Combed Cotton Crewneck Tee (Knitted)",
-        "hts": "6109.10.0012",
-        "qty": 2000,
-        "prior": 0,
-        "open": 2000,
-        "price": 4.5
-      },
-      {
-        "sku": "PCR-W-POLO-WHT-M",
-        "desc": "Women's Pique Polo Shirt",
-        "hts": "6106.10.0010",
-        "qty": 5000,
-        "prior": 0,
-        "open": 5000,
-        "price": 6.0
-      },
-      {
-        "sku": "PCR-H-HOOD-GRY-XL",
-        "desc": "Heavyweight Fleece Pullover Hoodie",
-        "hts": "6110.20.2079",
-        "qty": 1000,
-        "prior": 0,
-        "open": 1000,
-        "price": 11.0
-      }
-    ],
-    "inv_lines": [
-      {
-        "desc": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-        "hsn": "6205.20.00",
-        "qty": 2000,
-        "rate": 4.5,
-        "amount": 9000.0
-      },
-      {
-        "desc": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
-        "hsn": "6106.10.00",
-        "qty": 2050,
-        "rate": 6.4,
-        "amount": 13120.0
-      },
-      {
-        "desc": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
-        "hsn": "6110.20.00",
-        "qty": 1000,
-        "rate": 11.0,
-        "amount": 11000.0
-      }
-    ],
-    "weights": {
-      "inv": [
-        [
-          380.0,
-          420.0
-        ],
-        [
-          410.0,
-          450.0
-        ],
-        [
-          520.0,
-          490.0
-        ]
-      ],
-      "pl": [
-        [
-          380.0,
-          420.0
-        ],
-        [
-          410.0,
-          450.0
-        ],
-        [
-          520.0,
-          490.0
-        ]
-      ]
-    },
-    "cartons": {
-      "inv": [
-        40,
-        30,
-        30
-      ],
-      "pl": [
-        40,
-        30,
-        40
-      ]
-    },
-    "items": [
-      {
-        "id": "DISC-CARTONS",
-        "rule_id": "RULE-D01-CARTON-SYNC",
-        "category": "DETERMINISTIC_CONFLICT",
-        "severity": "CRITICAL",
-        "title": "Carton Count Mismatch (Invoice vs. Packing List)",
-        "description": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
-        "source_doc_a": "Commercial Invoice",
-        "source_field_a": "total_cartons_declared",
-        "source_val_a": "100 CTNS",
-        "source_doc_b": "Packing List",
-        "source_field_b": "total_cartons",
-        "source_val_b": "110 CTNS",
-        "highlight_cells": [
-          "inv-ctns",
-          "pl-ctns"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Verify physical warehouse tally sheet",
-          "Regenerate either Tally Invoice or Packing List so carton counts match"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "crit",
-        "cells": [
-          "inv-ctns",
-          "pl-ctns"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "pl",
-            "Packing List"
-          ]
-        ],
-        "body": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
-        "impact": "Mismatched carton counts trigger mandatory physical container exams and customs holds.",
-        "fix": "Regenerate invoice or packing list in exporter ERP so total carton count is identical."
-      },
-      {
-        "id": "DISC-WEIGHT-INV",
-        "rule_id": "RULE-D02-WEIGHT-PHYSICS",
-        "category": "DETERMINISTIC_CONFLICT",
-        "severity": "CRITICAL",
-        "title": "Line #3: Physical Weight Inversion (Net 520.0 kg > Gross 490.0 kg)",
-        "description": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
-        "source_doc_a": "Packing List",
-        "source_field_a": "Line #3 Net Weight",
-        "source_val_a": "520.0 KG",
-        "source_doc_b": "Packing List",
-        "source_field_b": "Line #3 Gross Weight",
-        "source_val_b": "490.0 KG",
-        "highlight_cells": [
-          "pl-net3",
-          "pl-gross3",
-          "inv-net3",
-          "inv-gross3"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Correct Line #3 Net (520.0 kg) and Gross (490.0 kg) weights in Packing List",
-          "Perform certified scale weighment before port gate-in"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "crit",
-        "cells": [
-          "pl-net3",
-          "pl-gross3",
-          "inv-net3",
-          "inv-gross3"
-        ],
-        "locs": [
-          [
-            "pl",
-            "Packing List"
-          ],
-          [
-            "inv",
-            "Commercial Invoice"
-          ]
-        ],
-        "body": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
-        "impact": "Immediate ICEGATE and CBP automated manifest rejection due to physical impossibility.",
-        "fix": "Re-scale Line #3 cartons and swap inverted Net (520.0 kg) vs Gross (490.0 kg) weights."
-      },
-      {
-        "id": "DISC-HS-1",
-        "rule_id": "RULE-C01-WCO-HS6-DIVERGENCE",
-        "category": "COMPLIANCE_ADVISORY",
-        "severity": "WARNING",
-        "title": "Line #1: 6-Digit HS Root Divergence (Invoice 620520 vs. PO 610910)",
-        "description": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
-        "source_doc_a": "Buyer PO (Commercial Ref)",
-        "source_field_a": "line_items[0].hts_code",
-        "source_val_a": "6109.10.0012",
-        "source_doc_b": "Commercial Invoice (Supplier HSN)",
-        "source_field_b": "line_items[0].hsn_code",
-        "source_val_b": "6205.20.00",
-        "highlight_cells": [
-          "po-hts1",
-          "inv-hsn1"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
-          "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-hts1",
-          "inv-hsn1"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
-        "impact": "Potential duty rate differential or customs entry reclassification by CBP.",
-        "fix": "Escalate to licensed US customs broker to verify proper classification."
-      },
-      {
-        "id": "DISC-PRICE-2",
-        "rule_id": "RULE-V01-PO-PRICE-VARIANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "CRITICAL",
-        "title": "Line #2: Unit Price Variance vs. Buyer PO (+6.7%)",
-        "description": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].unit_price_usd",
-        "source_val_a": "$6.00",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].unit_price_usd",
-        "source_val_b": "$6.40",
-        "highlight_cells": [
-          "po-price2",
-          "inv-rate2"
-        ],
-        "financial_impact_note": "Net invoice impact: +$820.00 USD across 2050 PCS",
-        "recommended_actions": [
-          "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
-          "If billing typo: Request Revised Tally Invoice at PO rate"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "crit",
-        "cells": [
-          "po-price2",
-          "inv-rate2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
-        "impact": "Commercial variance: +$820.00 USD across 2050 PCS.",
-        "fix": "If revised price was agreed: Accept Variance & attach PO Amendment. Otherwise request corrected invoice at PO rate."
-      },
-      {
-        "id": "DISC-QTY-2",
-        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "WARNING",
-        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
-        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].quantity",
-        "source_val_a": "5000 PCS",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].quantity",
-        "source_val_b": "2050 PCS",
-        "highlight_cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Approve as authorized split/short shipment",
-          "Request supplier correction if quantity was mis-keyed"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "impact": "Split shipment overage beyond agreed order quantity.",
-        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
-      }
-    ],
-    "passed": [
-      "Weight physics verified: Net (1310.0 kg) < Gross (1360.0 kg)",
-      "Currency USD consistent across all documents",
-      "Incoterms FOB Mundra agreed on Buyer PO",
-      "Port of loading INMUN1 matches shipping route"
-    ],
-    "updated_at": "2026-11-03T16:44:20.102160+00:00"
+    "updated_at": "2026-11-03T16:45:14.802970+00:00",
+    "auto_resolved_in_latest_rev": []
   },
   "NomUcXNyHVozcg": {
     "session_token": "NomUcXNyHVozcg",
@@ -3249,6 +2112,771 @@
       "Incoterms FOB Mundra agreed on Buyer PO",
       "Port of loading INMUN1 matches shipping route"
     ],
-    "updated_at": "2026-11-03T16:50:21.143430+00:00"
+    "updated_at": "2026-11-03T16:50:21.143430+00:00",
+    "auto_resolved_in_latest_rev": []
+  },
+  "lvF-B4_PsnwAFQ": {
+    "session_token": "lvF-B4_PsnwAFQ",
+    "revision_number": 2,
+    "packet": {
+      "shipment_id": "SHP-2026-7968",
+      "corridor": "INMUN1 -> USLAX",
+      "buyer_po": {
+        "po_number": "PO-PCR-45012",
+        "buyer_name": "Pacific Coast Retail Group LLC",
+        "po_date": "14-Oct-2026",
+        "incoterms": "FOB Mundra",
+        "quantity_tolerance_pct": 5.0,
+        "line_items": [
+          {
+            "line_no": 1,
+            "sku": "PCR-M-TEE-NVY-L",
+            "description": "Men's 100% Combed Cotton Crewneck Tee (Knitted)",
+            "hts_code": "6109.10.0012",
+            "quantity": 2000.0,
+            "uom": "PCS",
+            "unit_price_usd": 4.5,
+            "total_usd": 9000.0
+          },
+          {
+            "line_no": 2,
+            "sku": "PCR-W-POLO-WHT-M",
+            "description": "Women's Pique Polo Shirt",
+            "hts_code": "6106.10.0010",
+            "quantity": 5000.0,
+            "uom": "PCS",
+            "unit_price_usd": 6.0,
+            "total_usd": 30000.0
+          },
+          {
+            "line_no": 3,
+            "sku": "PCR-H-HOOD-GRY-XL",
+            "description": "Heavyweight Fleece Pullover Hoodie",
+            "hts_code": "6110.20.2079",
+            "quantity": 1000.0,
+            "uom": "PCS",
+            "unit_price_usd": 11.0,
+            "total_usd": 11000.0
+          }
+        ],
+        "total_po_value_usd": 50000.0
+      },
+      "commercial_invoice": {
+        "invoice_number": "SHR/EXP/26-27/0412",
+        "invoice_date": "14-Oct-2026",
+        "exporter_name": "Shreeji Textiles & Apparel Pvt. Ltd.",
+        "exporter_gstin": "24AABCS1429B1Z5",
+        "export_tax_route": "LUT_BOND",
+        "lut_arn_number": "AD240426009182Z",
+        "igst_amount_usd": 0.0,
+        "buyer_po_ref": "PO-PCR-45012",
+        "total_cartons_declared": 110,
+        "total_net_weight_kg": 1310.0,
+        "total_gross_weight_kg": 1360.0,
+        "total_invoice_value_usd": 32300.0,
+        "line_items": [
+          {
+            "line_no": 1,
+            "po_line_ref": 1,
+            "description": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
+            "hsn_code": "6109.10.00",
+            "quantity": 2000.0,
+            "uom": "PCS",
+            "unit_price_usd": 4.5,
+            "total_usd": 9000.0,
+            "match_confidence": "HIGH",
+            "carton_count": 40,
+            "net_weight_kg": 380.0,
+            "gross_weight_kg": 420.0
+          },
+          {
+            "line_no": 2,
+            "po_line_ref": 2,
+            "description": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
+            "hsn_code": "6106.10.00",
+            "quantity": 2050.0,
+            "uom": "PCS",
+            "unit_price_usd": 6.0,
+            "total_usd": 12300.0,
+            "match_confidence": "HIGH",
+            "carton_count": 30,
+            "net_weight_kg": 410.0,
+            "gross_weight_kg": 450.0
+          },
+          {
+            "line_no": 3,
+            "po_line_ref": 3,
+            "description": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
+            "hsn_code": "6110.20.00",
+            "quantity": 1000.0,
+            "uom": "PCS",
+            "unit_price_usd": 11.0,
+            "total_usd": 11000.0,
+            "match_confidence": "HIGH",
+            "carton_count": 40,
+            "net_weight_kg": 520.0,
+            "gross_weight_kg": 490.0
+          }
+        ]
+      },
+      "packing_list": {
+        "pl_number": "SHR/PL/0412",
+        "invoice_ref": "SHR/EXP/26-27/0412",
+        "total_cartons": 110,
+        "total_quantity": 5050.0,
+        "total_net_weight_kg": 1310.0,
+        "total_gross_weight_kg": 1360.0,
+        "items": [
+          {
+            "line_no": 1,
+            "description": "Cartons 1-40: 100% COTTON MENS ROUND NECK T-SHIRT",
+            "carton_count": 40,
+            "total_quantity": 2000.0,
+            "uom": "PCS",
+            "net_weight_kg": 380.0,
+            "gross_weight_kg": 420.0
+          },
+          {
+            "line_no": 2,
+            "description": "Cartons 41-70: LADIES COTTON PIQUE COLLAR T-SHIRT",
+            "carton_count": 30,
+            "total_quantity": 2050.0,
+            "uom": "PCS",
+            "net_weight_kg": 410.0,
+            "gross_weight_kg": 450.0
+          },
+          {
+            "line_no": 3,
+            "description": "Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE",
+            "carton_count": 40,
+            "total_quantity": 1000.0,
+            "uom": "PCS",
+            "net_weight_kg": 441.0,
+            "gross_weight_kg": 490.0
+          }
+        ]
+      }
+    },
+    "summary": {
+      "status": "CLEARED_WITH_EXCEPTIONS",
+      "audit_mode": "3_WAY_FULL",
+      "ruleset_version": "IN-US-2026.4",
+      "total_findings": 1,
+      "deterministic_conflicts": 0,
+      "commercial_variances": 1,
+      "compliance_advisories": 0,
+      "unresolved_count": 0,
+      "critical_count": 0,
+      "warning_count": 1,
+      "passed_count": 5
+    },
+    "discrepancies": [
+      {
+        "id": "DISC-QTY-2",
+        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
+        "category": "COMMERCIAL_VARIANCE",
+        "severity": "WARNING",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "source_doc_a": "Buyer PO",
+        "source_field_a": "line_items[1].quantity",
+        "source_val_a": "5000 PCS",
+        "source_doc_b": "Commercial Invoice",
+        "source_field_b": "line_items[1].quantity",
+        "source_val_b": "2050 PCS",
+        "highlight_cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Approve as authorized split/short shipment",
+          "Request supplier correction if quantity was mis-keyed"
+        ],
+        "resolution_state": "ACCEPTED_EXCEPTION",
+        "resolution_reason_chip": "Approved PO Amendment #2",
+        "resolution_note": null,
+        "resolved_by": "US Buyer Import Specialist",
+        "resolved_at": "18:07:27",
+        "sev": "warn",
+        "cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "impact": "Split shipment overage beyond agreed order quantity.",
+        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
+      },
+      {
+        "id": "DISC-CARTONS",
+        "rule_id": "RULE-D01-CARTON-SYNC",
+        "category": "DETERMINISTIC_CONFLICT",
+        "severity": "CRITICAL",
+        "title": "Carton Count Mismatch (Invoice vs. Packing List)",
+        "description": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
+        "source_doc_a": "Commercial Invoice",
+        "source_field_a": "total_cartons_declared",
+        "source_val_a": "100 CTNS",
+        "source_doc_b": "Packing List",
+        "source_field_b": "total_cartons",
+        "source_val_b": "110 CTNS",
+        "highlight_cells": [
+          "inv-ctns",
+          "pl-ctns"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Verify physical warehouse tally sheet",
+          "Regenerate either Tally Invoice or Packing List so carton counts match"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2 (110 CTNS = 110 CTNS)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "crit",
+        "cells": [
+          "inv-ctns",
+          "pl-ctns"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "pl",
+            "Packing List"
+          ]
+        ],
+        "body": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
+        "impact": "Mismatched carton counts trigger mandatory physical container exams and customs holds.",
+        "fix": "Regenerate invoice or packing list in exporter ERP so total carton count is identical."
+      },
+      {
+        "id": "DISC-WEIGHT-INV",
+        "rule_id": "RULE-D02-WEIGHT-PHYSICS",
+        "category": "DETERMINISTIC_CONFLICT",
+        "severity": "CRITICAL",
+        "title": "Line #3: Physical Weight Inversion (Net 520.0 kg > Gross 490.0 kg)",
+        "description": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
+        "source_doc_a": "Packing List",
+        "source_field_a": "Line #3 Net Weight",
+        "source_val_a": "520.0 KG",
+        "source_doc_b": "Packing List",
+        "source_field_b": "Line #3 Gross Weight",
+        "source_val_b": "490.0 KG",
+        "highlight_cells": [
+          "pl-net3",
+          "pl-gross3",
+          "inv-net3",
+          "inv-gross3"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Correct Line #3 Net (520.0 kg) and Gross (490.0 kg) weights in Packing List",
+          "Perform certified scale weighment before port gate-in"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Tare & gross weights re-weighed (Net <= Gross verified)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "crit",
+        "cells": [
+          "pl-net3",
+          "pl-gross3",
+          "inv-net3",
+          "inv-gross3"
+        ],
+        "locs": [
+          [
+            "pl",
+            "Packing List"
+          ],
+          [
+            "inv",
+            "Commercial Invoice"
+          ]
+        ],
+        "body": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
+        "impact": "Immediate ICEGATE and CBP automated manifest rejection due to physical impossibility.",
+        "fix": "Re-scale Line #3 cartons and swap inverted Net (520.0 kg) vs Gross (490.0 kg) weights."
+      },
+      {
+        "id": "DISC-HS-1",
+        "rule_id": "RULE-C01-WCO-HS6-DIVERGENCE",
+        "category": "COMPLIANCE_ADVISORY",
+        "severity": "WARNING",
+        "title": "Line #1: 6-Digit HS Root Divergence (Invoice 620520 vs. PO 610910)",
+        "description": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
+        "source_doc_a": "Buyer PO (Commercial Ref)",
+        "source_field_a": "line_items[0].hts_code",
+        "source_val_a": "6109.10.0012",
+        "source_doc_b": "Commercial Invoice (Supplier HSN)",
+        "source_field_b": "line_items[0].hsn_code",
+        "source_val_b": "6205.20.00",
+        "highlight_cells": [
+          "po-hts1",
+          "inv-hsn1"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
+          "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: 6-digit HS root harmonized with Buyer PO schedule",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "warn",
+        "cells": [
+          "po-hts1",
+          "inv-hsn1"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
+        "impact": "Potential duty rate differential or customs entry reclassification by CBP.",
+        "fix": "Escalate to licensed US customs broker to verify proper classification."
+      },
+      {
+        "id": "DISC-PRICE-2",
+        "rule_id": "RULE-V01-PO-PRICE-VARIANCE",
+        "category": "COMMERCIAL_VARIANCE",
+        "severity": "CRITICAL",
+        "title": "Line #2: Unit Price Variance vs. Buyer PO (+6.7%)",
+        "description": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
+        "source_doc_a": "Buyer PO",
+        "source_field_a": "line_items[1].unit_price_usd",
+        "source_val_a": "$6.00",
+        "source_doc_b": "Commercial Invoice",
+        "source_field_b": "line_items[1].unit_price_usd",
+        "source_val_b": "$6.40",
+        "highlight_cells": [
+          "po-price2",
+          "inv-rate2"
+        ],
+        "financial_impact_note": "Net invoice impact: +$820.00 USD across 2050 PCS",
+        "recommended_actions": [
+          "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
+          "If billing typo: Request Revised Tally Invoice at PO rate"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Unit rates and extended line arithmetic reconciled",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "crit",
+        "cells": [
+          "po-price2",
+          "inv-rate2"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
+        "impact": "Commercial variance: +$820.00 USD across 2050 PCS.",
+        "fix": "If revised price was agreed: Accept Variance & attach PO Amendment. Otherwise request corrected invoice at PO rate."
+      }
+    ],
+    "shipment_ref": "SHP-2026-7968",
+    "mid_code": "INSHRTEX2301SUR",
+    "metadata": {
+      "po_number": "PO-PCR-45012",
+      "invoice_no": "SHR/EXP/26-27/0412",
+      "invoice_date": "14-Oct-2026",
+      "packing_list_no": "SHR/PL/0412",
+      "exporter_name": "Shreeji Textiles & Apparel Pvt. Ltd.",
+      "exporter_street": "Plot 2301, GIDC Pandesara",
+      "exporter_city": "Surat",
+      "exporter_state": "Gujarat",
+      "exporter_postal": "394221",
+      "exporter_country_iso": "IN",
+      "exporter_gstin": "24AABCS1429B1Z5",
+      "exporter_iec": "5214098211",
+      "exporter_lut_arn": "AD240426009182Z",
+      "export_tax_route": "LUT_BOND",
+      "importer_name": "Pacific Coast Retail Group LLC",
+      "importer_city_state": "Los Angeles, CA",
+      "port_of_loading": "INMUN1",
+      "port_of_discharge": "USLAX",
+      "incoterm": "FOB Mundra",
+      "currency": "USD",
+      "po_incoterm": "FOB Mundra",
+      "po_currency": "USD",
+      "total_cartons_declared": 110,
+      "total_cartons": 110
+    },
+    "po_lines": [
+      {
+        "sku": "PCR-M-TEE-NVY-L",
+        "desc": "Men's 100% Combed Cotton Crewneck Tee (Knitted)",
+        "hts": "6109.10.0012",
+        "qty": 2000,
+        "prior": 0,
+        "open": 2000,
+        "price": 4.5
+      },
+      {
+        "sku": "PCR-W-POLO-WHT-M",
+        "desc": "Women's Pique Polo Shirt",
+        "hts": "6106.10.0010",
+        "qty": 5000,
+        "prior": 0,
+        "open": 5000,
+        "price": 6.0
+      },
+      {
+        "sku": "PCR-H-HOOD-GRY-XL",
+        "desc": "Heavyweight Fleece Pullover Hoodie",
+        "hts": "6110.20.2079",
+        "qty": 1000,
+        "prior": 0,
+        "open": 1000,
+        "price": 11.0
+      }
+    ],
+    "inv_lines": [
+      {
+        "desc": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
+        "hsn": "6109.10.00",
+        "qty": 2000,
+        "rate": 4.5,
+        "amount": 9000.0
+      },
+      {
+        "desc": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
+        "hsn": "6106.10.00",
+        "qty": 2050,
+        "rate": 6.0,
+        "amount": 12300.0
+      },
+      {
+        "desc": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
+        "hsn": "6110.20.00",
+        "qty": 1000,
+        "rate": 11.0,
+        "amount": 11000.0
+      }
+    ],
+    "weights": {
+      "inv": [
+        [
+          380.0,
+          420.0
+        ],
+        [
+          410.0,
+          450.0
+        ],
+        [
+          520.0,
+          490.0
+        ]
+      ],
+      "pl": [
+        [
+          380.0,
+          420.0
+        ],
+        [
+          410.0,
+          450.0
+        ],
+        [
+          441.0,
+          490.0
+        ]
+      ]
+    },
+    "cartons": {
+      "inv": [
+        40,
+        30,
+        40
+      ],
+      "pl": [
+        40,
+        30,
+        40
+      ]
+    },
+    "items": [
+      {
+        "id": "DISC-QTY-2",
+        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
+        "category": "COMMERCIAL_VARIANCE",
+        "severity": "WARNING",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "source_doc_a": "Buyer PO",
+        "source_field_a": "line_items[1].quantity",
+        "source_val_a": "5000 PCS",
+        "source_doc_b": "Commercial Invoice",
+        "source_field_b": "line_items[1].quantity",
+        "source_val_b": "2050 PCS",
+        "highlight_cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Approve as authorized split/short shipment",
+          "Request supplier correction if quantity was mis-keyed"
+        ],
+        "resolution_state": "ACCEPTED_EXCEPTION",
+        "resolution_reason_chip": "Approved PO Amendment #2",
+        "resolution_note": null,
+        "resolved_by": "US Buyer Import Specialist",
+        "resolved_at": "18:07:27",
+        "sev": "warn",
+        "cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "impact": "Split shipment overage beyond agreed order quantity.",
+        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
+      },
+      {
+        "id": "DISC-CARTONS",
+        "rule_id": "RULE-D01-CARTON-SYNC",
+        "category": "DETERMINISTIC_CONFLICT",
+        "severity": "CRITICAL",
+        "title": "Carton Count Mismatch (Invoice vs. Packing List)",
+        "description": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
+        "source_doc_a": "Commercial Invoice",
+        "source_field_a": "total_cartons_declared",
+        "source_val_a": "100 CTNS",
+        "source_doc_b": "Packing List",
+        "source_field_b": "total_cartons",
+        "source_val_b": "110 CTNS",
+        "highlight_cells": [
+          "inv-ctns",
+          "pl-ctns"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Verify physical warehouse tally sheet",
+          "Regenerate either Tally Invoice or Packing List so carton counts match"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2 (110 CTNS = 110 CTNS)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "crit",
+        "cells": [
+          "inv-ctns",
+          "pl-ctns"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "pl",
+            "Packing List"
+          ]
+        ],
+        "body": "Commercial Invoice declares 100 cartons, but Packing List totals 110 cartons (10 carton variance). Both documents must agree before shipping bill and customs manifest generation.",
+        "impact": "Mismatched carton counts trigger mandatory physical container exams and customs holds.",
+        "fix": "Regenerate invoice or packing list in exporter ERP so total carton count is identical."
+      },
+      {
+        "id": "DISC-WEIGHT-INV",
+        "rule_id": "RULE-D02-WEIGHT-PHYSICS",
+        "category": "DETERMINISTIC_CONFLICT",
+        "severity": "CRITICAL",
+        "title": "Line #3: Physical Weight Inversion (Net 520.0 kg > Gross 490.0 kg)",
+        "description": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
+        "source_doc_a": "Packing List",
+        "source_field_a": "Line #3 Net Weight",
+        "source_val_a": "520.0 KG",
+        "source_doc_b": "Packing List",
+        "source_field_b": "Line #3 Gross Weight",
+        "source_val_b": "490.0 KG",
+        "highlight_cells": [
+          "pl-net3",
+          "pl-gross3",
+          "inv-net3",
+          "inv-gross3"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Correct Line #3 Net (520.0 kg) and Gross (490.0 kg) weights in Packing List",
+          "Perform certified scale weighment before port gate-in"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Tare & gross weights re-weighed (Net <= Gross verified)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "crit",
+        "cells": [
+          "pl-net3",
+          "pl-gross3",
+          "inv-net3",
+          "inv-gross3"
+        ],
+        "locs": [
+          [
+            "pl",
+            "Packing List"
+          ],
+          [
+            "inv",
+            "Commercial Invoice"
+          ]
+        ],
+        "body": "Line #3 (Cartons 71-110: HEAVYWEIGHT FLEECE PULLOVER HOODIE): Inverted weights declared on Packing List \u2014 Net Weight (520.0 kg) exceeds Gross Weight (490.0 kg) by 30.0 kg. Net cargo weight cannot physically exceed carton gross weight. (Total header weights: Net 1310.0 kg vs Gross 1360.0 kg).",
+        "impact": "Immediate ICEGATE and CBP automated manifest rejection due to physical impossibility.",
+        "fix": "Re-scale Line #3 cartons and swap inverted Net (520.0 kg) vs Gross (490.0 kg) weights."
+      },
+      {
+        "id": "DISC-HS-1",
+        "rule_id": "RULE-C01-WCO-HS6-DIVERGENCE",
+        "category": "COMPLIANCE_ADVISORY",
+        "severity": "WARNING",
+        "title": "Line #1: 6-Digit HS Root Divergence (Invoice 620520 vs. PO 610910)",
+        "description": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
+        "source_doc_a": "Buyer PO (Commercial Ref)",
+        "source_field_a": "line_items[0].hts_code",
+        "source_val_a": "6109.10.0012",
+        "source_doc_b": "Commercial Invoice (Supplier HSN)",
+        "source_field_b": "line_items[0].hsn_code",
+        "source_val_b": "6205.20.00",
+        "highlight_cells": [
+          "po-hts1",
+          "inv-hsn1"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
+          "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: 6-digit HS root harmonized with Buyer PO schedule",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "warn",
+        "cells": [
+          "po-hts1",
+          "inv-hsn1"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Supplier Tally HSN (6205.20.00) and Buyer PO reference HTS (6109.10.0012) differ at the international 6-digit WCO subheading level (620520 vs 610910). Note: Buyer PO HTS is a commercial reference only\u2014confirm binding US classification with licensed customs broker.",
+        "impact": "Potential duty rate differential or customs entry reclassification by CBP.",
+        "fix": "Escalate to licensed US customs broker to verify proper classification."
+      },
+      {
+        "id": "DISC-PRICE-2",
+        "rule_id": "RULE-V01-PO-PRICE-VARIANCE",
+        "category": "COMMERCIAL_VARIANCE",
+        "severity": "CRITICAL",
+        "title": "Line #2: Unit Price Variance vs. Buyer PO (+6.7%)",
+        "description": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
+        "source_doc_a": "Buyer PO",
+        "source_field_a": "line_items[1].unit_price_usd",
+        "source_val_a": "$6.00",
+        "source_doc_b": "Commercial Invoice",
+        "source_field_b": "line_items[1].unit_price_usd",
+        "source_val_b": "$6.40",
+        "highlight_cells": [
+          "po-price2",
+          "inv-rate2"
+        ],
+        "financial_impact_note": "Net invoice impact: +$820.00 USD across 2050 PCS",
+        "recommended_actions": [
+          "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
+          "If billing typo: Request Revised Tally Invoice at PO rate"
+        ],
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Unit rates and extended line arithmetic reconciled",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "17:49:55",
+        "sev": "crit",
+        "cells": [
+          "po-price2",
+          "inv-rate2"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
+        "impact": "Commercial variance: +$820.00 USD across 2050 PCS.",
+        "fix": "If revised price was agreed: Accept Variance & attach PO Amendment. Otherwise request corrected invoice at PO rate."
+      }
+    ],
+    "passed": [
+      "Carton parity verified: 110 CTNS on Invoice equals Packing List",
+      "Weight physics verified: Net (1310.0 kg) < Gross (1360.0 kg)",
+      "Currency USD consistent across all documents",
+      "Incoterms FOB Mundra agreed on Buyer PO",
+      "Port of loading INMUN1 matches shipping route"
+    ],
+    "updated_at": "2026-11-03T18:07:27.826616+00:00",
+    "auto_resolved_in_latest_rev": [
+      "DISC-CARTONS",
+      "DISC-WEIGHT-INV",
+      "DISC-HS-1",
+      "DISC-PRICE-2"
+    ]
   }
 }

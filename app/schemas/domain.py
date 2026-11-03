@@ -16,6 +16,7 @@ ResolutionState = Literal[
     "REVISION_REQUESTED",
     "ACCEPTED_EXCEPTION",
     "ESCALATED_TO_BROKER",
+    "CLEARED_BY_REVISION",
 ]
 
 AuditOverallStatus = Literal[

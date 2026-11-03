@@ -86,6 +86,7 @@ class AuditResponse(BaseModel):
     items: List[DiscrepancyItem] = Field(default_factory=list)
     passed: List[str] = Field(default_factory=list)
     updated_at: Optional[str] = None
+    auto_resolved_in_latest_rev: List[str] = Field(default_factory=list)
 
 
 class ShipmentListItem(BaseModel):

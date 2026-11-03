@@ -98,7 +98,14 @@ async def run_direct_tests():
     )
     assert reaudit_res.revision_number == 2, f"Expected revision 2, got {reaudit_res.revision_number}"
     assert reaudit_res.summary.unresolved_count < audit_res.summary.unresolved_count
+    assert len(reaudit_res.auto_resolved_in_latest_rev) > 0, "Expected auto_resolved_in_latest_rev to be populated"
+    cleared_items = [it for it in reaudit_res.items if it.resolution_state == "CLEARED_BY_REVISION"]
+    assert len(cleared_items) > 0, "Expected auto-resolved items in reaudit_res.items"
+    assert "Cleared by Supplier Upload (Rev v2)" in cleared_items[0].resolution_reason_chip
+    assert "Fixed in Rev v2" in cleared_items[0].resolution_note
     print(f"   Re-audit completed: rev={reaudit_res.revision_number}, status={reaudit_res.summary.status}")
+    print(f"   Auto-resolved diff items in Rev v2: {reaudit_res.auto_resolved_in_latest_rev}")
+    print(f"   Cleared item sample note: {cleared_items[0].resolution_note}")
     print(f"   Unresolved discrepancies reduced to: {reaudit_res.summary.unresolved_count}")
 
     # 5. Test delete_shipment
