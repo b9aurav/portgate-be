@@ -444,3 +444,152 @@ def test_post_workspace_claim(client: TestClient, dirty_packet_v1: ShipmentPacke
     res_claim_again = client.post("/api/workspace/claim", headers=auth_header)
     assert res_claim_again.status_code == 200
     assert res_claim_again.json()["claimed_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 11. Magic Link Security: Revocation, Rotation, and Audit Logging
+# ---------------------------------------------------------------------------
+def test_reaudit_decision_trail_upload_event(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """Supplier re-audit logs an explicit upload event with actor 'Supplier Portal Upload (Zero-Login Magic Link)'."""
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id="sandbox_upload_test",
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token = stored.session_token
+
+    res = client.post(
+        f"/api/links/{token}/re-audit",
+        data={"mock": "true"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    trail = data.get("decision_trail", [])
+    upload_entry = next((e for e in trail if e.get("discrepancy_id") == "REVISION_UPLOAD"), None)
+    assert upload_entry is not None, "Explicit upload event must be in decision trail"
+    assert upload_entry["actor_name"] == "Supplier Portal Upload (Zero-Login Magic Link)"
+    assert "Uploaded Revision v2" in upload_entry["action"]
+    assert upload_entry["reason_chip"] == "Supplier Portal Upload"
+
+
+def test_rotate_magic_link_and_revocation_guardrails(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """
+    POST /api/shipments/{token}/rotate-link:
+    - Generates new token and sets link_expires_at.
+    - Revoking the link sets link_revoked=True.
+    - Re-audit on revoked link returns 403 Forbidden.
+    """
+    owner = "sandbox_security_guardrails"
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    orig_token = stored.session_token
+
+    # 1. Rotate link -> returns new session_token
+    res_rotate = client.post(
+        f"/api/shipments/{orig_token}/rotate-link",
+        headers={"X-Workspace-Id": owner},
+    )
+    assert res_rotate.status_code == 200
+    rotated_data = res_rotate.json()
+    new_token = rotated_data["session_token"]
+    assert new_token != orig_token
+    assert rotated_data.get("link_revoked") is False
+    assert rotated_data.get("link_expires_at") is not None
+
+    # Old token no longer exists
+    assert client.get(f"/api/links/{orig_token}").status_code == 404
+
+    # 2. Revoke link
+    res_revoke = client.post(
+        f"/api/shipments/{new_token}/rotate-link?revoke=true",
+        headers={"X-Workspace-Id": owner},
+    )
+    assert res_revoke.status_code == 200
+    assert res_revoke.json().get("link_revoked") is True
+
+    # 3. Attempt re-audit on revoked link -> 403 Forbidden
+    res_reaudit = client.post(
+        f"/api/links/{new_token}/re-audit",
+        data={"mock": "true"},
+    )
+    assert res_reaudit.status_code == 403
+    assert "revoked by the buyer" in res_reaudit.json()["detail"]
+
+
+def test_reaudit_expired_link_returns_403(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """Attempting re-audit on an expired link returns 403 Forbidden."""
+    owner = "sandbox_expired_test"
+    audit = run_deterministic_audit(dirty_packet_v1)
+    audit.link_expires_at = "2020-01-01T00:00:00Z"  # Past date
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token = stored.session_token
+
+    res_reaudit = client.post(
+        f"/api/links/{token}/re-audit",
+        data={"mock": "true"},
+    )
+    assert res_reaudit.status_code == 403
+    assert "expired" in res_reaudit.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 12. Hybrid Sandbox Resilience (Stale Token & Canonical Token Fallback)
+# ---------------------------------------------------------------------------
+def test_expired_bearer_token_falls_back_to_sandbox_workspace(client: TestClient):
+    """
+    When a browser sends an expired/stale Bearer token along with X-Workspace-Id,
+    it must NOT crash with 401 Unauthorized; it must fall back to the sandbox.
+    """
+    sandbox_id = "sandbox_resilient_guest_42"
+    stale_headers = {
+        "Authorization": "Bearer expired_jwt_token_from_yesterday",
+        "X-Workspace-Id": sandbox_id,
+    }
+
+    # 1. GET /api/shipments should succeed (200 OK)
+    res_list = client.get("/api/shipments", headers=stale_headers)
+    assert res_list.status_code == 200
+    assert len(res_list.json()) >= 1
+
+    # 2. POST /api/audit should succeed (200 OK)
+    dummy_pdf = io.BytesIO(b"%PDF-1.4 test")
+    res_audit = client.post(
+        "/api/audit",
+        files={
+            "po_pdf": ("po.pdf", dummy_pdf, "application/pdf"),
+            "inv_pdf": ("inv.pdf", dummy_pdf, "application/pdf"),
+            "pl_pdf": ("pl.pdf", dummy_pdf, "application/pdf"),
+        },
+        data={"mock": "true"},
+        headers=stale_headers,
+    )
+    assert res_audit.status_code == 200
+    token = res_audit.json()["session_token"]
+
+    # 3. POST /api/shipments/{token}/rotate-link should succeed (200 OK)
+    res_rotate = client.post(
+        f"/api/shipments/{token}/rotate-link",
+        headers=stale_headers,
+    )
+    assert res_rotate.status_code == 200
+
+
+def test_get_session_shreeji_po_9921_canonical_fallback(client: TestClient):
+    """The canonical pre-seeded token 'shreeji-po-9921' is always resolvable via GET /api/links/{token}."""
+    res = client.get("/api/links/shreeji-po-9921")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["session_token"] == "shreeji-po-9921"
+    assert data["shipment_ref"] == "SHP-2026-8841"
+    assert data["summary"]["status"] == "ACTION_REQUIRED"
+
+

@@ -402,3 +402,71 @@ def test_2way_audit_mode_when_buyer_po_is_omitted(clean_packet: ShipmentPacket):
     assert audit.summary.commercial_variances == 0
     assert audit.summary.status == "VERIFIED_CLEAN"
 
+
+# ---------------------------------------------------------------------------
+# 7. Industry Reviewer Customs Compliance Checks (Incoterm & CBP Cargo Desc)
+# ---------------------------------------------------------------------------
+def test_incoterm_valuation_mismatch(clean_packet: ShipmentPacket):
+    """PO Incoterm ('FOB Mundra') vs Invoice Incoterm ('CIF Los Angeles') triggers DISC-INCOTERM."""
+    packet = copy.deepcopy(clean_packet)
+    packet.buyer_po.incoterm = "FOB Mundra"
+    packet.commercial_invoice.incoterms = "CIF Los Angeles"
+
+    findings, _ = run_deterministic_lint(packet)
+    incoterm_disc = next((f for f in findings if f.id == "DISC-INCOTERM"), None)
+
+    assert incoterm_disc is not None, "DISC-INCOTERM must be triggered when Incoterms conflict"
+    assert incoterm_disc.rule_id == "RULE-V03-INCOTERM-VALUATION"
+    assert incoterm_disc.category == "DETERMINISTIC_CONFLICT"
+    assert incoterm_disc.severity == "CRITICAL"
+    assert "FOB" in incoterm_disc.source_val_a
+    assert "CIF" in incoterm_disc.source_val_b
+
+
+def test_incoterm_matching_passes(clean_packet: ShipmentPacket):
+    """Matching Incoterms (case-insensitive) pass valuation check without findings."""
+    packet = copy.deepcopy(clean_packet)
+    packet.buyer_po.incoterms = "FOB Mundra"
+    packet.commercial_invoice.incoterms = "fob mundra"
+
+    findings, passed = run_deterministic_lint(packet)
+    incoterm_disc = next((f for f in findings if f.id == "DISC-INCOTERM"), None)
+    assert incoterm_disc is None
+    assert any("Incoterm" in p for p in passed)
+
+
+def test_vague_cargo_description_rejected(clean_packet: ShipmentPacket):
+    """Generic description ('apparel' or short description) triggers DISC-DESC-VAGUE-* under 19 CFR 4.7a."""
+    packet = copy.deepcopy(clean_packet)
+    packet.commercial_invoice.line_items[0].description = "apparel"
+
+    findings, _ = run_deterministic_lint(packet)
+    vague_disc = next((f for f in findings if f.id == "DISC-DESC-VAGUE-1"), None)
+
+    assert vague_disc is not None, "DISC-DESC-VAGUE-1 must be triggered for generic cargo description"
+    assert vague_disc.rule_id == "RULE-C03-CBP-VAGUE-CARGO-DESC"
+    assert vague_disc.category == "COMPLIANCE_ADVISORY"
+    assert vague_disc.severity == "WARNING"
+    assert "19 CFR 4.7a" in vague_disc.description
+
+
+def test_dynamic_extraction_confidence_scoring(clean_packet: ShipmentPacket):
+    """Clean packet scores high extraction confidence with 0 low-confidence fields."""
+    audit_clean = run_deterministic_audit(clean_packet)
+    assert audit_clean.extraction_confidence_pct >= 99.0
+    assert len(audit_clean.low_confidence_fields) == 0
+
+    # Degradation test: missing GSTIN, unknown invoice number, and REVIEW_REQUIRED line match
+    packet_degraded = copy.deepcopy(clean_packet)
+    packet_degraded.commercial_invoice.invoice_number = "INV-UNKNOWN"
+    packet_degraded.commercial_invoice.exporter_gstin = None
+    packet_degraded.commercial_invoice.line_items[0].match_confidence = "REVIEW_REQUIRED"
+
+    audit_degraded = run_deterministic_audit(packet_degraded)
+    assert audit_degraded.extraction_confidence_pct < 95.0
+    assert "commercial_invoice.invoice_number" in audit_degraded.low_confidence_fields
+    assert "commercial_invoice.exporter_gstin" in audit_degraded.low_confidence_fields
+    assert "commercial_invoice.line_items[0].match_confidence" in audit_degraded.low_confidence_fields
+
+
+

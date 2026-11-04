@@ -42,6 +42,7 @@ class BuyerPO(BaseModel):
     buyer_name: str
     po_date: str
     incoterms: str = "FOB MUNDRA"
+    incoterm: Optional[str] = None
     quantity_tolerance_pct: float = 5.0
     line_items: List[POLineItem] = Field(default_factory=list)
     total_po_value_usd: float = 0.0
@@ -71,6 +72,8 @@ class CommercialInvoice(BaseModel):
     lut_arn_number: Optional[str] = None
     igst_amount_usd: Optional[float] = 0.0
     buyer_po_ref: Optional[str] = None
+    incoterms: Optional[str] = "FOB MUNDRA"
+    incoterm: Optional[str] = None
     total_cartons_declared: int = 0
     total_net_weight_kg: float = 0.0
     total_gross_weight_kg: float = 0.0

@@ -17,7 +17,7 @@ import json
 import logging
 import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -504,7 +504,57 @@ class SessionStore:
             except Exception as exc:
                 logger.warning("Supabase get_session failed for token %s: %s", token, exc)
 
-        return self._sessions.get(token)
+        # 2. Check local memory
+        if token in self._sessions:
+            return self._sessions[token]
+
+        # 3. Check local disk cache fallback (loads canonical pre-seeded packets like shreeji-po-9921)
+        self._load_from_disk()
+        if token in self._sessions:
+            if self._supabase:
+                try:
+                    s = self._sessions[token]
+                    owner_id = self._owners.get(token, "sandbox_default")
+                    po_num = s.packet.buyer_po.po_number if (s.packet and s.packet.buyer_po) else "PO"
+                    inv_num = s.packet.commercial_invoice.invoice_number if (s.packet and s.packet.commercial_invoice) else "INV"
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    self._supabase.table("shipments").upsert({
+                        "session_token": token,
+                        "owner_id": owner_id,
+                        "po_invoice_key": f"{po_num}::{inv_num}",
+                        "audit_payload": s.model_dump(mode="json"),
+                        "updated_at": now_iso,
+                    }).execute()
+                    logger.info("Auto-synced disk token '%s' into Supabase", token)
+                except Exception as exc:
+                    logger.warning("Failed to auto-sync disk session '%s' to Supabase: %s", token, exc)
+            return self._sessions[token]
+
+        # 4. Canonical alias fallback: if token is shreeji-po-9921, generate on demand
+        if token == "shreeji-po-9921":
+            try:
+                from app.services.extractor import build_mock_packet, extracted_to_shipment_packet
+                from app.services.linter import run_deterministic_audit
+                packet = extracted_to_shipment_packet(build_mock_packet())
+                seed_audit = run_deterministic_audit(packet=packet, session_token="shreeji-po-9921", revision_number=1)
+                self._sessions["shreeji-po-9921"] = seed_audit
+                self._owners["shreeji-po-9921"] = "sandbox_default"
+                if self._supabase:
+                    try:
+                        self._supabase.table("shipments").upsert({
+                            "session_token": "shreeji-po-9921",
+                            "owner_id": "sandbox_default",
+                            "po_invoice_key": "PO-PCR-45012::SHR/EXP/26-27/0412",
+                            "audit_payload": seed_audit.model_dump(mode="json"),
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }).execute()
+                    except Exception as exc:
+                        logger.warning("Failed to upsert shreeji-po-9921: %s", exc)
+                return seed_audit
+            except Exception as exc:
+                logger.warning("Failed to generate canonical shreeji-po-9921: %s", exc)
+
+        return None
 
     def get_session_files(self, token: str) -> Dict[str, Any]:
         """Returns the stored uploaded file bytes and metadata for the session."""
@@ -542,6 +592,17 @@ class SessionStore:
         new_audit.session_token = token
         new_audit.revision_number = new_revision
         new_audit.updated_at = datetime.now(timezone.utc).isoformat()
+
+        # Preserve security & confidence metadata from previous revision
+        if old_audit:
+            if getattr(old_audit, "link_expires_at", None):
+                new_audit.link_expires_at = old_audit.link_expires_at
+            if getattr(old_audit, "link_revoked", None) is not None:
+                new_audit.link_revoked = old_audit.link_revoked
+            if getattr(old_audit, "extraction_confidence_pct", None) is not None:
+                new_audit.extraction_confidence_pct = old_audit.extraction_confidence_pct
+            if getattr(old_audit, "low_confidence_fields", None) is not None:
+                new_audit.low_confidence_fields = list(old_audit.low_confidence_fields)
 
         auto_resolved_ids: list[str] = []
         auto_resolved_items: list[Any] = []
@@ -635,6 +696,23 @@ class SessionStore:
                 "actor_name": f"Supplier Upload (Rev v{new_revision})",
                 "timestamp": fixed_item.resolved_at or now_sec,
             })
+
+        # Explicit upload ledger entry in decision_trail
+        doc_count = len([k for k in (new_files or {}).keys() if k in ("po", "inv", "pl") and (new_files or {})[k]])
+        doc_count_str = f"{doc_count} revised document(s)" if doc_count > 0 else "revised document(s)"
+        new_audit.decision_trail.insert(0, {
+            "id": f"DEC-UPLOAD-v{new_revision}",
+            "discrepancy_id": "REVISION_UPLOAD",
+            "title": f"Supplier Revised Packet Upload (Rev v{new_revision})",
+            "previous_state": "REVISION_REQUESTED",
+            "new_state": "CLEARED_BY_REVISION",
+            "action": f"Uploaded Revision v{new_revision} — {len(auto_resolved_ids)} conflict(s) reconciled (SHA-256 verified)",
+            "reason_chip": "Supplier Portal Upload",
+            "note": f"Supplier uploaded {doc_count_str} via zero-login link. Verified SHA-256 signatures and automatically reconciled {len(auto_resolved_ids)} discrepancy item(s).",
+            "actor_role": "SUPPLIER_PORTAL",
+            "actor_name": "Supplier Portal Upload (Zero-Login Magic Link)",
+            "timestamp": now_sec,
+        })
 
         new_audit.auto_resolved_in_latest_rev = auto_resolved_ids
 
@@ -774,6 +852,124 @@ class SessionStore:
                 logger.exception("Supabase resolve_discrepancy failed: %s", exc)
 
         self._sessions[token] = session
+        if not self._supabase:
+            self._save_to_disk()
+
+        return session
+
+    # -------------------------------------------------------------------------
+    # 4b. Magic Link Security: Rotate or Revoke Link
+    # -------------------------------------------------------------------------
+    def rotate_magic_link(
+        self,
+        token: str,
+        owner_id: Optional[str] = None,
+        revoke: bool = False,
+    ) -> AuditResponse:
+        """
+        Rotates or revokes the supplier magic link token for a session.
+        If revoke=True: sets link_revoked=True.
+        If revoke=False: generates a new session_token, moves files and owner records,
+        resets link_revoked=False, and resets link_expires_at to +7 days from now.
+        Returns the updated AuditResponse.
+        """
+        session = self.get_session(token)
+        if not session:
+            raise KeyError(f"Session '{token}' not found")
+
+        # Verify owner permission if provided
+        actual_owner = self._owners.get(token)
+        if owner_id and actual_owner and actual_owner != owner_id:
+            raise PermissionError("Unauthorized to modify this shipment session")
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        if revoke:
+            session.link_revoked = True
+            session.updated_at = now_iso
+            if not getattr(session, "decision_trail", None):
+                session.decision_trail = []
+            session.decision_trail.insert(0, {
+                "id": f"DEC-REVOKE-{secrets.token_urlsafe(6)}",
+                "discrepancy_id": "MAGIC_LINK_REVOKED",
+                "title": "Supplier Magic Link Revoked",
+                "previous_state": "ACTIVE",
+                "new_state": "REVOKED",
+                "action": "REVOKED",
+                "reason_chip": "Security Guardrail",
+                "note": "Buyer explicitly revoked supplier upload magic link access.",
+                "actor_role": "BUYER_ADMIN",
+                "actor_name": "Compliance Admin",
+                "timestamp": now.strftime("%H:%M:%S"),
+            })
+
+            if self._supabase:
+                try:
+                    self._supabase.table("shipments").update({
+                        "audit_payload": session.model_dump(mode="json"),
+                        "updated_at": now_iso,
+                    }).eq("session_token", token).execute()
+                except Exception as exc:
+                    logger.warning("Supabase update for rotate_magic_link (revoke) failed: %s", exc)
+
+            self._sessions[token] = session
+            if not self._supabase:
+                self._save_to_disk()
+            return session
+
+        # Rotate / Regenerate link
+        new_token = f"shp_{secrets.token_urlsafe(16)}"
+        new_expires_at = (now + timedelta(days=7)).isoformat()
+
+        session.session_token = new_token
+        session.link_revoked = False
+        session.link_expires_at = new_expires_at
+        session.updated_at = now_iso
+
+        if not getattr(session, "decision_trail", None):
+            session.decision_trail = []
+        session.decision_trail.insert(0, {
+            "id": f"DEC-ROTATE-{secrets.token_urlsafe(6)}",
+            "discrepancy_id": "MAGIC_LINK_ROTATED",
+            "title": "Supplier Magic Link Rotated",
+            "previous_state": "ROTATED",
+            "new_state": "ACTIVE",
+            "action": "ROTATED",
+            "reason_chip": "Security Guardrail",
+            "note": f"Buyer regenerated supplier magic link (Expires in 7 days: {new_expires_at[:10]}). Previous token invalidated.",
+            "actor_role": "BUYER_ADMIN",
+            "actor_name": "Compliance Admin",
+            "timestamp": now.strftime("%H:%M:%S"),
+        })
+
+        if self._supabase:
+            try:
+                self._supabase.table("shipments").delete().eq("session_token", token).execute()
+                po_num = session.packet.buyer_po.po_number if (session.packet and session.packet.buyer_po) else "PO"
+                inv_num = session.packet.commercial_invoice.invoice_number if (session.packet and session.packet.commercial_invoice) else "INV"
+                self._supabase.table("shipments").insert({
+                    "session_token": new_token,
+                    "owner_id": actual_owner or "sandbox_default",
+                    "po_invoice_key": f"{po_num}::{inv_num}",
+                    "audit_payload": session.model_dump(mode="json"),
+                    "updated_at": now_iso,
+                }).execute()
+            except Exception as exc:
+                logger.warning("Supabase rotate_magic_link failed: %s", exc)
+
+        # Move memory references
+        self._sessions.pop(token, None)
+        self._sessions[new_token] = session
+
+        if token in self._owners:
+            self._owners[new_token] = self._owners.pop(token)
+        else:
+            self._owners[new_token] = actual_owner or "sandbox_default"
+
+        if token in self._files:
+            self._files[new_token] = self._files.pop(token)
+
         if not self._supabase:
             self._save_to_disk()
 

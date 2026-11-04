@@ -9,6 +9,7 @@ frontend components (DocumentViewer, AuditSidebar, ExportModal).
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from app.schemas.api import AuditResponse, AuditSummary, DiscrepancyItem
@@ -79,6 +80,118 @@ def generate_cbp_mid(
     addr = _address_number(street_address)
     cit = _city_code(city)
     return f"{cc}{comp}{addr}{cit}"
+
+
+# ---------------------------------------------------------------------------
+# Extraction Confidence Scoring Engine
+# ---------------------------------------------------------------------------
+def calculate_extraction_confidence(packet: ShipmentPacket) -> tuple[float, list[str]]:
+    """
+    Computes a deterministic extraction confidence score (percentage) and
+    identifies low-confidence or missing fields across the 3-document packet.
+
+    Formula Components:
+    1. Header Completeness & Quality (40% weight)
+    2. Line Item Match & Field Validity (40% weight)
+    3. Cross-Document Structural Parity (20% weight)
+    """
+    low_confidence_fields: list[str] = []
+    deductions: float = 0.0
+
+    inv = packet.commercial_invoice
+    pl = packet.packing_list
+    po = packet.buyer_po
+
+    # 1. Commercial Invoice Header Completeness
+    if not inv.invoice_number or inv.invoice_number in ("INV-UNKNOWN", "UNKNOWN"):
+        low_confidence_fields.append("commercial_invoice.invoice_number")
+        deductions += 3.0
+    if not inv.invoice_date:
+        low_confidence_fields.append("commercial_invoice.invoice_date")
+        deductions += 1.5
+    if not inv.exporter_name or inv.exporter_name == "Exporter":
+        low_confidence_fields.append("commercial_invoice.exporter_name")
+        deductions += 2.0
+    if not inv.exporter_gstin:
+        low_confidence_fields.append("commercial_invoice.exporter_gstin")
+        deductions += 1.0
+    if inv.total_cartons_declared <= 0:
+        low_confidence_fields.append("commercial_invoice.total_cartons_declared")
+        deductions += 1.5
+    if inv.total_net_weight_kg <= 0 or inv.total_gross_weight_kg <= 0:
+        low_confidence_fields.append("commercial_invoice.weights")
+        deductions += 1.5
+    if not (inv.incoterms or inv.incoterm):
+        low_confidence_fields.append("commercial_invoice.incoterms")
+        deductions += 1.0
+
+    # 2. Packing List Header Completeness
+    if not pl.pl_number or pl.pl_number in ("PL-UNKNOWN", "UNKNOWN"):
+        low_confidence_fields.append("packing_list.pl_number")
+        deductions += 2.5
+    if pl.total_cartons <= 0:
+        low_confidence_fields.append("packing_list.total_cartons")
+        deductions += 1.5
+    if pl.total_gross_weight_kg <= 0:
+        low_confidence_fields.append("packing_list.gross_weight")
+        deductions += 1.5
+
+    # 3. Buyer PO Header Completeness (if 3-way audit)
+    if po:
+        if not po.po_number or po.po_number in ("PO-UNKNOWN", "UNKNOWN"):
+            low_confidence_fields.append("buyer_po.po_number")
+            deductions += 3.0
+        if not po.buyer_name:
+            low_confidence_fields.append("buyer_po.buyer_name")
+            deductions += 1.5
+        if not (po.incoterms or po.incoterm):
+            low_confidence_fields.append("buyer_po.incoterms")
+            deductions += 1.0
+        if po.total_po_value_usd <= 0:
+            low_confidence_fields.append("buyer_po.total_value")
+            deductions += 1.0
+
+    # 4. Line Item Field Validity & Semantic Match Confidence
+    if not inv.line_items:
+        low_confidence_fields.append("commercial_invoice.line_items")
+        deductions += 10.0
+    else:
+        for idx, line in enumerate(inv.line_items):
+            field_prefix = f"commercial_invoice.line_items[{idx}]"
+            # Match confidence
+            if getattr(line, "match_confidence", "HIGH") == "MEDIUM":
+                low_confidence_fields.append(f"{field_prefix}.match_confidence")
+                deductions += 1.0
+            elif getattr(line, "match_confidence", "HIGH") == "REVIEW_REQUIRED":
+                low_confidence_fields.append(f"{field_prefix}.match_confidence")
+                deductions += 2.5
+
+            # HSN code formatting check
+            clean_hsn = (line.hsn_code or "").replace(".", "").replace(" ", "").strip()
+            if len(clean_hsn) < 4:
+                low_confidence_fields.append(f"{field_prefix}.hsn_code")
+                deductions += 1.0
+
+            # Line quantity & rate checks
+            if line.quantity <= 0:
+                low_confidence_fields.append(f"{field_prefix}.quantity")
+                deductions += 0.5
+            if line.unit_price_usd <= 0:
+                low_confidence_fields.append(f"{field_prefix}.unit_price")
+                deductions += 0.5
+
+            # Description length check
+            if len((line.description or "").strip()) < 10:
+                low_confidence_fields.append(f"{field_prefix}.description")
+                deductions += 0.5
+
+    # 5. Clamped confidence computation
+    if deductions == 0.0:
+        confidence_pct = 99.8
+    else:
+        confidence_pct = round(max(60.0, min(99.8, 100.0 - deductions)), 1)
+
+    return confidence_pct, low_confidence_fields
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +398,9 @@ def build_audit_response(
         city="Surat",
     )
 
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    confidence_pct, low_confidence_fields = calculate_extraction_confidence(packet)
+
     return AuditResponse(
         session_token=session_token,
         revision_number=revision_number,
@@ -300,5 +416,9 @@ def build_audit_response(
         cartons=cartons_ui,
         items=findings,
         passed=passed_checks,
+        link_expires_at=expires_at,
+        link_revoked=False,
+        extraction_confidence_pct=confidence_pct,
+        low_confidence_fields=low_confidence_fields,
     )
 

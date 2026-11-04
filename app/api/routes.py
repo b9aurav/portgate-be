@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import logging
 import secrets
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 
 from app import config
 from app.schemas.api import AuditResponse, PatchResolutionRequest, ShipmentListItem
@@ -89,15 +90,30 @@ async def get_current_owner_id(
     """
     Resolves the workspace owner:
     1. If Authorization: Bearer <token> is present, verifies Supabase JWT -> user_<uuid>.
-    2. If Authorization header is invalid/expired, raises 401.
-    3. If Authorization header is absent, falls back to X-Workspace-Id or sandbox_default.
+    2. If Authorization token is valid, returns user_<uuid>.
+    3. If Authorization token is invalid or expired:
+       - If X-Workspace-Id is provided (e.g. sandbox_<uuid>), falls back to sandbox
+         so anonymous demo visitors with stale browser sessions are never locked out.
+       - If no X-Workspace-Id was provided (explicit authenticated caller), raises 401.
+    4. If Authorization header is absent, falls back to X-Workspace-Id or sandbox_default.
     """
     if authorization and authorization.strip():
         auth_val = authorization.strip()
         if auth_val.lower().startswith("bearer "):
             token = auth_val[7:].strip()
-            return verify_supabase_token(token)
+            try:
+                return verify_supabase_token(token)
+            except HTTPException:
+                if x_workspace_id and x_workspace_id.strip().startswith("sandbox_"):
+                    logger.warning(
+                        "Bearer token invalid/expired; falling back to sandbox workspace '%s'",
+                        x_workspace_id.strip(),
+                    )
+                    return x_workspace_id.strip()
+                raise
         else:
+            if x_workspace_id and x_workspace_id.strip().startswith("sandbox_"):
+                return x_workspace_id.strip()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired authentication token",
@@ -177,6 +193,38 @@ def delete_shipment(token: str, owner_id: str = Depends(get_current_owner_id)):
             detail=f"Shipment session '{token}' not found",
         )
     return {"status": "success", "deleted_token": token}
+
+
+@router.post(
+    "/api/shipments/{token}/rotate-link",
+    response_model=AuditResponse,
+    summary="Rotate or revoke supplier magic link token for a shipment",
+)
+def rotate_magic_link(
+    token: str,
+    revoke: bool = Query(False, description="Set True to revoke without generating new link"),
+    owner_id: str = Depends(get_current_owner_id),
+) -> AuditResponse:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    try:
+        updated = session_store.rotate_magic_link(token=token, owner_id=owner_id, revoke=revoke)
+        return updated
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment session '{token}' not found",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthorized to modify this shipment session",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to rotate magic link: {str(exc)}",
+        )
 
 
 @router.post(
@@ -342,6 +390,26 @@ async def re_audit(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Audit session '{token}' not found.",
         )
+
+    # Magic Link Security Guardrail: Check revocation & expiration
+    if getattr(existing_audit, "link_revoked", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This supplier revision link has been revoked by the buyer.",
+        )
+
+    if getattr(existing_audit, "link_expires_at", None):
+        try:
+            exp_dt = datetime.fromisoformat(existing_audit.link_expires_at.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > exp_dt:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This supplier revision link has expired. Please contact the buyer for a new link.",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to parse link_expires_at: %s", exc)
 
     # Guardrail: Lock packet when already cleared
     unresolved_count = (

@@ -34,6 +34,17 @@ def _clean_digits(val: str | None) -> str:
     return re.sub(r"\D", "", str(val or ""))
 
 
+def _extract_incoterm_code(text: str | None) -> str | None:
+    """Extract standard 3-letter Incoterm code from delivery terms string."""
+    if not text:
+        return None
+    match = re.search(r"\b(EXW|FCA|CPT|CIP|DAP|DPU|DDP|FAS|FOB|CFR|CIF)\b", text, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    cleaned = text.strip()[:3].upper()
+    return cleaned if len(cleaned) == 3 and cleaned.isalpha() else None
+
+
 def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem], List[str]]:
     """
     Executes the 9 deterministic compliance rules against the ShipmentPacket.
@@ -413,6 +424,47 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
                     )
                 )
 
+        # 8. RULE-V03-INCOTERM-VALUATION (CRITICAL)
+        po_inco_raw = getattr(po, "incoterm", None) or getattr(po, "incoterms", None) or ""
+        inv_inco_raw = getattr(inv, "incoterm", None) or getattr(inv, "incoterms", None) or ""
+        po_inco_code = _extract_incoterm_code(po_inco_raw)
+        inv_inco_code = _extract_incoterm_code(inv_inco_raw)
+
+        if po_inco_code and inv_inco_code and po_inco_code != inv_inco_code:
+            desc_inco = (
+                f"Commercial Invoice declares delivery terms '{inv_inco_raw}' ({inv_inco_code}), "
+                f"which conflicts with Buyer PO delivery terms '{po_inco_raw}' ({po_inco_code}). "
+                "Under US Customs valuation statutes (19 U.S.C. §1401a), Incoterm discrepancy creates a dutiable value "
+                "risk regarding mandatory inclusion or deduction of ocean freight, insurance, and foreign inland charges."
+            )
+            findings.append(
+                DiscrepancyItem(
+                    id="DISC-INCOTERM",
+                    rule_id="RULE-V03-INCOTERM-VALUATION",
+                    category="DETERMINISTIC_CONFLICT",
+                    severity="CRITICAL",
+                    sev="crit",
+                    title="Incoterm Valuation Conflict (PO vs. Commercial Invoice)",
+                    description=desc_inco,
+                    body=desc_inco,
+                    impact="US CBP transaction valuation audit risk under 19 U.S.C. §1401a for incorrect freight/insurance declaration.",
+                    fix="Reconcile delivery terms: regenerate Commercial Invoice to match contract PO term, or execute an authorized PO Amendment.",
+                    source_doc_a="Buyer PO",
+                    source_field_a="incoterms",
+                    source_val_a=str(po_inco_raw),
+                    source_doc_b="Commercial Invoice",
+                    source_field_b="incoterms",
+                    source_val_b=str(inv_inco_raw),
+                    highlight_cells=["po-incoterm", "inv-incoterm"],
+                    cells=["po-incoterm", "inv-incoterm"],
+                    locs=[["inv", "Commercial Invoice"], ["po", "Buyer PO"]],
+                    recommended_actions=[
+                        "Confirm agreed shipping Incoterm in buyer contract",
+                        "Regenerate Commercial Invoice with PO Incoterm or execute formal PO Amendment",
+                    ],
+                )
+            )
+
     # 9. RULE-C02-EXPORT-GST-ROUTE (WARNING)
     if inv.export_tax_route == "LUT_BOND" and not (inv.lut_arn_number and inv.lut_arn_number.strip()):
         desc_lut = (
@@ -446,6 +498,58 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
                 ],
             )
         )
+
+    # 10. RULE-C03-CBP-VAGUE-CARGO-DESC (WARNING)
+    GENERIC_DESCRIPTIONS = {
+        "apparel",
+        "garments",
+        "textiles",
+        "cloth",
+        "clothing",
+        "parts",
+        "auto parts",
+        "samples",
+        "general cargo",
+        "merchandise",
+        "tiles",
+        "goods",
+    }
+    for idx, inv_item in enumerate(inv.line_items):
+        raw_desc = (inv_item.description or "").strip()
+        cleaned_desc = raw_desc.lower()
+        if len(raw_desc) < 10 or cleaned_desc in GENERIC_DESCRIPTIONS:
+            desc_vague = (
+                f"Commercial Invoice line #{inv_item.line_no} cargo description '{raw_desc}' is too generic. "
+                "Under US CBP Cargo Messaging and 19 CFR 4.7a rules, generic descriptions are rejected at ISF and entry filing. "
+                "CBP requires specific product identity, construction, and material composition for 10-digit HTSUS confirmation."
+            )
+            findings.append(
+                DiscrepancyItem(
+                    id=f"DISC-DESC-VAGUE-{inv_item.line_no}",
+                    rule_id="RULE-C03-CBP-VAGUE-CARGO-DESC",
+                    category="COMPLIANCE_ADVISORY",
+                    severity="WARNING",
+                    sev="warn",
+                    title=f"Line #{inv_item.line_no}: Vague CBP Commodity Description",
+                    description=desc_vague,
+                    body=desc_vague,
+                    impact="CBP ACE manifest rejection or mandatory physical container hold under 19 CFR 4.7a generic cargo rules.",
+                    fix="Amend cargo description on invoice to include specific material composition (e.g. '100% Combed Cotton Knitted T-Shirt').",
+                    source_doc_a="Commercial Invoice",
+                    source_field_a=f"line_items[{idx}].description",
+                    source_val_a=raw_desc,
+                    source_doc_b="CBP 19 CFR 4.7a Guidelines",
+                    source_field_b="acceptable_description_rule",
+                    source_val_b="Requires specific product type + material",
+                    highlight_cells=[f"inv-desc{inv_item.line_no}"],
+                    cells=[f"inv-desc{inv_item.line_no}"],
+                    locs=[["inv", "Commercial Invoice"]],
+                    recommended_actions=[
+                        "Update Tally invoice description with precise fiber composition and garment type",
+                        "Align description with Buyer PO product specification",
+                    ],
+                )
+            )
 
     # Compile Passed Checks
     passed_checks: List[str] = []
