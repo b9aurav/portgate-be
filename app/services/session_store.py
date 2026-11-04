@@ -66,6 +66,11 @@ class SessionStore:
         """Provides backward compatibility for health probe session count."""
         return self._sessions
 
+    @property
+    def supabase_client(self):
+        """Returns the underlying Supabase client (or None if unconfigured/mocked)."""
+        return self._supabase
+
     # -------------------------------------------------------------------------
     # Local JSON Fallback Persistence
     # -------------------------------------------------------------------------
@@ -840,6 +845,123 @@ class SessionStore:
 
         # Re-seed clean demo packet for this sandbox
         self.ensure_workspace_seeded(owner_id)
+
+    # -------------------------------------------------------------------------
+    # 6. Claim Workspace Migration (Sandbox -> Authenticated Account)
+    # -------------------------------------------------------------------------
+    def claim_sandbox_workspace(self, sandbox_owner_id: str, user_owner_id: str) -> int:
+        """
+        Migrates all shipments from an anonymous sandbox into an authenticated user's workspace.
+        Deduplicates against existing shipments in the user's account by po_invoice_key.
+        Returns the number of claimed shipments.
+        """
+        sandbox_owner_id = sandbox_owner_id.strip() if sandbox_owner_id else ""
+        user_owner_id = user_owner_id.strip() if user_owner_id else ""
+
+        if not sandbox_owner_id.startswith("sandbox_") or sandbox_owner_id == user_owner_id:
+            return 0
+
+        claimed_count = 0
+
+        # 1. If Supabase is active
+        if self._supabase:
+            try:
+                sandbox_res = (
+                    self._supabase.table("shipments")
+                    .select("session_token, po_invoice_key")
+                    .eq("owner_id", sandbox_owner_id)
+                    .execute()
+                )
+                sandbox_rows = sandbox_res.data or []
+
+                user_res = (
+                    self._supabase.table("shipments")
+                    .select("po_invoice_key")
+                    .eq("owner_id", user_owner_id)
+                    .execute()
+                )
+                user_keys = {
+                    r["po_invoice_key"] for r in (user_res.data or []) if r.get("po_invoice_key")
+                }
+
+                for s_row in sandbox_rows:
+                    tok = s_row["session_token"]
+                    key = s_row.get("po_invoice_key")
+
+                    if key and key in user_keys:
+                        # User already has this shipment; delete duplicate sandbox row
+                        self._supabase.table("shipments").delete().eq("session_token", tok).execute()
+                        self._sessions.pop(tok, None)
+                        self._owners.pop(tok, None)
+                        self._files.pop(tok, None)
+                    else:
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        self._supabase.table("shipments").update({
+                            "owner_id": user_owner_id,
+                            "updated_at": now_iso,
+                        }).eq("session_token", tok).execute()
+                        if key:
+                            user_keys.add(key)
+                        self._owners[tok] = user_owner_id
+                        claimed_count += 1
+            except Exception as exc:
+                logger.exception("Supabase claim_sandbox_workspace failed: %s", exc)
+
+        # 2. Local in-memory cache sync & fallback mode
+        user_mem_keys = set()
+        for tok, session in self._sessions.items():
+            if self._owners.get(tok) == user_owner_id:
+                po = ""
+                inv = ""
+                if session.packet:
+                    if session.packet.buyer_po and session.packet.buyer_po.po_number:
+                        po = session.packet.buyer_po.po_number
+                    if session.packet.commercial_invoice and session.packet.commercial_invoice.invoice_number:
+                        inv = session.packet.commercial_invoice.invoice_number
+                elif session.metadata:
+                    po = session.metadata.po_number or ""
+                    inv = session.metadata.invoice_no or ""
+                if po and inv:
+                    user_mem_keys.add(f"{po}::{inv}")
+
+        sandbox_tokens = [tok for tok, oid in list(self._owners.items()) if oid == sandbox_owner_id]
+        for tok in sandbox_tokens:
+            session = self._sessions.get(tok)
+            if not session:
+                continue
+            po = ""
+            inv = ""
+            if session.packet:
+                if session.packet.buyer_po and session.packet.buyer_po.po_number:
+                    po = session.packet.buyer_po.po_number
+                if session.packet.commercial_invoice and session.packet.commercial_invoice.invoice_number:
+                    inv = session.packet.commercial_invoice.invoice_number
+            elif session.metadata:
+                po = session.metadata.po_number or ""
+                inv = session.metadata.invoice_no or ""
+            key = f"{po}::{inv}" if (po and inv) else ""
+
+            if key and key in user_mem_keys:
+                self._sessions.pop(tok, None)
+                self._owners.pop(tok, None)
+                self._files.pop(tok, None)
+            else:
+                self._owners[tok] = user_owner_id
+                if key:
+                    user_mem_keys.add(key)
+                if not self._supabase:
+                    claimed_count += 1
+
+        if not self._supabase:
+            self._save_to_disk()
+
+        logger.info(
+            "Claimed %d shipments from sandbox '%s' into account '%s'",
+            claimed_count,
+            sandbox_owner_id,
+            user_owner_id,
+        )
+        return claimed_count
 
 
 # Global singleton instance

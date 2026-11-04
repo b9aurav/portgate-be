@@ -324,3 +324,39 @@ def test_cleared_shipment_lockout_guardrail(clean_packet: ShipmentPacket, dirty_
 
     assert "already cleared and locked for customs filing" in str(exc_info2.value)
 
+
+# ---------------------------------------------------------------------------
+# 6. Claim Sandbox Workspace Migration & Deduplication
+# ---------------------------------------------------------------------------
+def test_claim_sandbox_workspace_migration_and_deduplication(dirty_packet_v1: ShipmentPacket, clean_packet: ShipmentPacket):
+    """
+    Tests claim_sandbox_workspace directly:
+    - Migrates unique shipments from sandbox_<uuid> to user_<uuid>.
+    - Deletes duplicate sandbox shipments if user_<uuid> already owns that po_invoice_key.
+    - Leaves non-sandbox accounts untouched.
+    """
+    sandbox_id = "sandbox_anon_session_test"
+    user_id = "user_enterprise_buyer_1"
+
+    # 1. Create a shipment in sandbox
+    dirty_audit = run_deterministic_audit(dirty_packet_v1)
+    s_dirty = session_store.create_or_replace_session(dirty_audit, owner_id=sandbox_id)
+    token_dirty = s_dirty.session_token
+
+    # 2. Claim workspace: migrates s_dirty to user_id
+    claimed = session_store.claim_sandbox_workspace(sandbox_id, user_id)
+    assert claimed == 1
+    assert session_store._owners.get(token_dirty) == user_id
+
+    # 3. Create another shipment in sandbox with same PO+Invoice key
+    dirty_audit_2 = run_deterministic_audit(dirty_packet_v1)
+    s_dirty_2 = session_store.create_or_replace_session(dirty_audit_2, owner_id=sandbox_id)
+    token_dup = s_dirty_2.session_token
+
+    # Claim again: since user_id already owns this PO+Invoice key, duplicate is purged
+    claimed_second = session_store.claim_sandbox_workspace(sandbox_id, user_id)
+    assert claimed_second == 0
+    assert token_dup not in session_store._sessions
+    # Original user shipment remains intact
+    assert session_store._owners.get(token_dirty) == user_id
+

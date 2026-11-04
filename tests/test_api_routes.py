@@ -362,3 +362,85 @@ def test_post_workspace_reset(client: TestClient, dirty_packet_v1: ShipmentPacke
     assert len(shipments_after) >= 1
     # Custom token is gone, replaced with fresh seed
     assert not any(s.session_token == custom_token for s in shipments_after)
+
+
+# ---------------------------------------------------------------------------
+# 9. Supabase JWT Authentication & Token Verification
+# ---------------------------------------------------------------------------
+def test_get_shipments_with_supabase_jwt_auth(client: TestClient):
+    """
+    Validates Supabase Bearer token authentication:
+    - Valid Bearer token scopes queue to user_<id>.
+    - Invalid or expired Bearer token raises 401 Unauthorized.
+    - Malformed Authorization header raises 401 Unauthorized.
+    """
+    # 1. Valid token -> 200 OK scoped to user
+    res_valid = client.get(
+        "/api/shipments",
+        headers={"Authorization": "Bearer valid_token_buyer_alpha"},
+    )
+    assert res_valid.status_code == 200
+    shipments = res_valid.json()
+    assert isinstance(shipments, list)
+    assert len(shipments) >= 1
+
+    # 2. Invalid token -> 401 Unauthorized
+    res_invalid = client.get(
+        "/api/shipments",
+        headers={"Authorization": "Bearer invalid_secret_token_123"},
+    )
+    assert res_invalid.status_code == 401
+    assert "Invalid or expired authentication token" in res_invalid.json()["detail"]
+
+    # 3. Malformed Authorization (missing Bearer prefix) -> 401 Unauthorized
+    res_malformed = client.get(
+        "/api/shipments",
+        headers={"Authorization": "Basic some_credentials"},
+    )
+    assert res_malformed.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 10. POST /api/workspace/claim
+# ---------------------------------------------------------------------------
+def test_post_workspace_claim(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """
+    POST /api/workspace/claim:
+    - Requires valid Authorization: Bearer token (401 without auth).
+    - Migrates shipments from X-Workspace-Id into the authenticated user account.
+    - Subsequent claim of duplicate PO+Invoice key deduplicates cleanly.
+    """
+    # 1. Unauthenticated claim attempt -> 401
+    res_no_auth = client.post(
+        "/api/workspace/claim",
+        headers={"X-Workspace-Id": "sandbox_claim_test"},
+    )
+    assert res_no_auth.status_code == 401
+    assert "Authentication required" in res_no_auth.json()["detail"]
+
+    # 2. Setup a sandbox session
+    sandbox_id = "sandbox_anon_prospective_buyer"
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored_sandbox = session_store.create_or_replace_session(audit, owner_id=sandbox_id)
+    sandbox_token = stored_sandbox.session_token
+
+    # Verify shipment is in sandbox
+    assert any(s.session_token == sandbox_token for s in session_store.list_shipments(sandbox_id))
+
+    # 3. Claim sandbox into user account user_alice_corp
+    auth_header = {"Authorization": "Bearer valid_token_alice_corp", "X-Workspace-Id": sandbox_id}
+    res_claim = client.post("/api/workspace/claim", headers=auth_header)
+    assert res_claim.status_code == 200
+    claim_data = res_claim.json()
+    assert claim_data["status"] == "success"
+    assert claim_data["claimed_count"] == 1
+    assert claim_data["owner_id"] == "user_alice_corp"
+
+    # Verify shipment is now in user's account
+    user_shipments = session_store.list_shipments("user_alice_corp")
+    assert any(s.session_token == sandbox_token for s in user_shipments)
+
+    # 4. Claim again (duplicate PO+Invoice): must handle deduplication cleanly
+    res_claim_again = client.post("/api/workspace/claim", headers=auth_header)
+    assert res_claim_again.status_code == 200
+    assert res_claim_again.json()["claimed_count"] == 0
