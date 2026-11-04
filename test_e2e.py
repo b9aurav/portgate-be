@@ -108,6 +108,33 @@ async def run_direct_tests():
     print(f"   Cleared item sample note: {cleared_items[0].resolution_note}")
     print(f"   Unresolved discrepancies reduced to: {reaudit_res.summary.unresolved_count}")
 
+    # 4b. Test re_audit guardrail when shipment is 100% cleared
+    remaining_item = next(it for it in reaudit_res.items if it.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED"))
+    await patch_discrepancy(
+        token=token,
+        discrepancy_id=remaining_item.id,
+        req=PatchResolutionRequest(
+            resolution_state="ACCEPTED_EXCEPTION",
+            resolution_reason_chip="Approved Waiver",
+            resolution_note="Waiver granted for final item",
+            actor_role="BUYER_WORKBENCH"
+        )
+    )
+    from fastapi import HTTPException
+    guardrail_triggered = False
+    try:
+        await re_audit(
+            token=token,
+            invoice_file=UploadFile(filename="late_attempt.pdf", file=io.BytesIO(b"%PDF")),
+            packing_list_file=UploadFile(filename="late_attempt.pdf", file=io.BytesIO(b"%PDF")),
+            mock=False
+        )
+    except HTTPException as exc:
+        if exc.status_code == 400 and "already cleared and locked" in str(exc.detail):
+            guardrail_triggered = True
+    assert guardrail_triggered, "Expected re_audit to raise HTTP 400 when shipment is already cleared and locked"
+    print("   Guardrail verified: re-audit on cleared/locked packet rejected with HTTP 400!")
+
     # 5. Test delete_shipment
     from app.api.routes import delete_shipment
     from app.services.session_store import session_store

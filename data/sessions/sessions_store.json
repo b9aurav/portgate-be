@@ -1,7 +1,7 @@
 {
   "shreeji-po-9921": {
     "session_token": "shreeji-po-9921",
-    "revision_number": 1,
+    "revision_number": 2,
     "packet": {
       "shipment_id": "SHP-2026-8841",
       "corridor": "INMUN1 -> USLAX",
@@ -54,16 +54,16 @@
         "lut_arn_number": "AD240426009182Z",
         "igst_amount_usd": 0.0,
         "buyer_po_ref": "PO-PCR-45012",
-        "total_cartons_declared": 100,
+        "total_cartons_declared": 110,
         "total_net_weight_kg": 1310.0,
         "total_gross_weight_kg": 1360.0,
-        "total_invoice_value_usd": 33120.0,
+        "total_invoice_value_usd": 32300.0,
         "line_items": [
           {
             "line_no": 1,
             "po_line_ref": 1,
             "description": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-            "hsn_code": "6205.20.00",
+            "hsn_code": "6109.10.00",
             "quantity": 2000.0,
             "uom": "PCS",
             "unit_price_usd": 4.5,
@@ -80,8 +80,8 @@
             "hsn_code": "6106.10.00",
             "quantity": 2050.0,
             "uom": "PCS",
-            "unit_price_usd": 6.4,
-            "total_usd": 13120.0,
+            "unit_price_usd": 6.0,
+            "total_usd": 12300.0,
             "match_confidence": "HIGH",
             "carton_count": 30,
             "net_weight_kg": 410.0,
@@ -97,7 +97,7 @@
             "unit_price_usd": 11.0,
             "total_usd": 11000.0,
             "match_confidence": "HIGH",
-            "carton_count": 30,
+            "carton_count": 40,
             "net_weight_kg": 520.0,
             "gross_weight_kg": 490.0
           }
@@ -135,26 +135,72 @@
             "carton_count": 40,
             "total_quantity": 1000.0,
             "uom": "PCS",
-            "net_weight_kg": 520.0,
+            "net_weight_kg": 441.0,
             "gross_weight_kg": 490.0
           }
         ]
       }
     },
     "summary": {
-      "status": "ACTION_REQUIRED",
+      "status": "CLEARED_WITH_EXCEPTIONS",
       "audit_mode": "3_WAY_FULL",
       "ruleset_version": "IN-US-2026.4",
-      "total_findings": 5,
-      "deterministic_conflicts": 2,
-      "commercial_variances": 2,
-      "compliance_advisories": 1,
-      "unresolved_count": 5,
-      "critical_count": 3,
-      "warning_count": 2,
-      "passed_count": 4
+      "total_findings": 1,
+      "deterministic_conflicts": 0,
+      "commercial_variances": 1,
+      "compliance_advisories": 0,
+      "unresolved_count": 0,
+      "critical_count": 0,
+      "warning_count": 1,
+      "passed_count": 5
     },
     "discrepancies": [
+      {
+        "id": "DISC-QTY-2",
+        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
+        "category": "COMMERCIAL_VARIANCE",
+        "severity": "WARNING",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "source_doc_a": "Buyer PO",
+        "source_field_a": "line_items[1].quantity",
+        "source_val_a": "5000 PCS",
+        "source_doc_b": "Commercial Invoice",
+        "source_field_b": "line_items[1].quantity",
+        "source_val_b": "2050 PCS",
+        "highlight_cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Approve as authorized split/short shipment",
+          "Request supplier correction if quantity was mis-keyed"
+        ],
+        "resolution_state": "ACCEPTED_EXCEPTION",
+        "resolution_reason_chip": "Agreed Seasonal Surcharge Pre-Approved",
+        "resolution_note": null,
+        "resolved_by": "US Buyer Import Specialist",
+        "resolved_at": "03:18:20",
+        "sev": "warn",
+        "cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "impact": "Split shipment overage beyond agreed order quantity.",
+        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
+      },
       {
         "id": "DISC-CARTONS",
         "rule_id": "RULE-D01-CARTON-SYNC",
@@ -177,11 +223,11 @@
           "Verify physical warehouse tally sheet",
           "Regenerate either Tally Invoice or Packing List so carton counts match"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2 (110 CTNS = 110 CTNS)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "crit",
         "cells": [
           "inv-ctns",
@@ -225,11 +271,11 @@
           "Correct Line #3 Net (520.0 kg) and Gross (490.0 kg) weights in Packing List",
           "Perform certified scale weighment before port gate-in"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Tare & gross weights re-weighed (Net <= Gross verified)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "crit",
         "cells": [
           "pl-net3",
@@ -273,11 +319,11 @@
           "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
           "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: 6-digit HS root harmonized with Buyer PO schedule",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "warn",
         "cells": [
           "po-hts1",
@@ -319,11 +365,11 @@
           "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
           "If billing typo: Request Revised Tally Invoice at PO rate"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Unit rates and extended line arithmetic reconciled",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "crit",
         "cells": [
           "po-price2",
@@ -342,52 +388,6 @@
         "body": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
         "impact": "Commercial variance: +$820.00 USD across 2050 PCS.",
         "fix": "If revised price was agreed: Accept Variance & attach PO Amendment. Otherwise request corrected invoice at PO rate."
-      },
-      {
-        "id": "DISC-QTY-2",
-        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "WARNING",
-        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
-        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].quantity",
-        "source_val_a": "5000 PCS",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].quantity",
-        "source_val_b": "2050 PCS",
-        "highlight_cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Approve as authorized split/short shipment",
-          "Request supplier correction if quantity was mis-keyed"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "impact": "Split shipment overage beyond agreed order quantity.",
-        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
       }
     ],
     "shipment_ref": "SHP-2026-8841",
@@ -415,7 +415,7 @@
       "currency": "USD",
       "po_incoterm": "FOB Mundra",
       "po_currency": "USD",
-      "total_cartons_declared": 100,
+      "total_cartons_declared": 110,
       "total_cartons": 110
     },
     "po_lines": [
@@ -450,7 +450,7 @@
     "inv_lines": [
       {
         "desc": "100% COTTON MENS ROUND NECK T-SHIRT (KNITTED) BATCH #44A",
-        "hsn": "6205.20.00",
+        "hsn": "6109.10.00",
         "qty": 2000,
         "rate": 4.5,
         "amount": 9000.0
@@ -459,8 +459,8 @@
         "desc": "LADIES COTTON PIQUE COLLAR T-SHIRT WHITE",
         "hsn": "6106.10.00",
         "qty": 2050,
-        "rate": 6.4,
-        "amount": 13120.0
+        "rate": 6.0,
+        "amount": 12300.0
       },
       {
         "desc": "HEAVYWEIGHT FLEECE PULLOVER HOODIE ASH GREY",
@@ -495,7 +495,7 @@
           450.0
         ],
         [
-          520.0,
+          441.0,
           490.0
         ]
       ]
@@ -504,7 +504,7 @@
       "inv": [
         40,
         30,
-        30
+        40
       ],
       "pl": [
         40,
@@ -513,6 +513,52 @@
       ]
     },
     "items": [
+      {
+        "id": "DISC-QTY-2",
+        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
+        "category": "COMMERCIAL_VARIANCE",
+        "severity": "WARNING",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "source_doc_a": "Buyer PO",
+        "source_field_a": "line_items[1].quantity",
+        "source_val_a": "5000 PCS",
+        "source_doc_b": "Commercial Invoice",
+        "source_field_b": "line_items[1].quantity",
+        "source_val_b": "2050 PCS",
+        "highlight_cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "financial_impact_note": null,
+        "recommended_actions": [
+          "Approve as authorized split/short shipment",
+          "Request supplier correction if quantity was mis-keyed"
+        ],
+        "resolution_state": "ACCEPTED_EXCEPTION",
+        "resolution_reason_chip": "Agreed Seasonal Surcharge Pre-Approved",
+        "resolution_note": null,
+        "resolved_by": "US Buyer Import Specialist",
+        "resolved_at": "03:18:20",
+        "sev": "warn",
+        "cells": [
+          "po-open2",
+          "inv-qty2"
+        ],
+        "locs": [
+          [
+            "inv",
+            "Commercial Invoice"
+          ],
+          [
+            "po",
+            "Buyer PO"
+          ]
+        ],
+        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
+        "impact": "Split shipment overage beyond agreed order quantity.",
+        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
+      },
       {
         "id": "DISC-CARTONS",
         "rule_id": "RULE-D01-CARTON-SYNC",
@@ -535,11 +581,11 @@
           "Verify physical warehouse tally sheet",
           "Regenerate either Tally Invoice or Packing List so carton counts match"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2 (110 CTNS = 110 CTNS)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "crit",
         "cells": [
           "inv-ctns",
@@ -583,11 +629,11 @@
           "Correct Line #3 Net (520.0 kg) and Gross (490.0 kg) weights in Packing List",
           "Perform certified scale weighment before port gate-in"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Tare & gross weights re-weighed (Net <= Gross verified)",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "crit",
         "cells": [
           "pl-net3",
@@ -631,11 +677,11 @@
           "Escalate to Licensed US Customs Broker to confirm binding 10-digit HTSUS",
           "Request Supplier HSN review if woven vs. knit chapter was misselected in Tally"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: 6-digit HS root harmonized with Buyer PO schedule",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "warn",
         "cells": [
           "po-hts1",
@@ -677,11 +723,11 @@
           "If revised price was agreed: Accept Variance & attach Buyer PO Amendment / Email",
           "If billing typo: Request Revised Tally Invoice at PO rate"
         ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
+        "resolution_state": "CLEARED_BY_REVISION",
+        "resolution_reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "resolution_note": "Fixed in Rev v2: Unit rates and extended line arithmetic reconciled",
+        "resolved_by": "Supplier Upload (Rev v2)",
+        "resolved_at": "03:17:52",
         "sev": "crit",
         "cells": [
           "po-price2",
@@ -700,62 +746,22 @@
         "body": "Tally Invoice bills $6.40/PCS vs. Buyer PO $6.00/PCS (+6.7%). Buyer must authorize commercial overage or request invoice correction.",
         "impact": "Commercial variance: +$820.00 USD across 2050 PCS.",
         "fix": "If revised price was agreed: Accept Variance & attach PO Amendment. Otherwise request corrected invoice at PO rate."
-      },
-      {
-        "id": "DISC-QTY-2",
-        "rule_id": "RULE-V02-PO-QTY-TOLERANCE",
-        "category": "COMMERCIAL_VARIANCE",
-        "severity": "WARNING",
-        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
-        "description": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "source_doc_a": "Buyer PO",
-        "source_field_a": "line_items[1].quantity",
-        "source_val_a": "5000 PCS",
-        "source_doc_b": "Commercial Invoice",
-        "source_field_b": "line_items[1].quantity",
-        "source_val_b": "2050 PCS",
-        "highlight_cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "financial_impact_note": null,
-        "recommended_actions": [
-          "Approve as authorized split/short shipment",
-          "Request supplier correction if quantity was mis-keyed"
-        ],
-        "resolution_state": "UNRESOLVED",
-        "resolution_reason_chip": null,
-        "resolution_note": null,
-        "resolved_by": null,
-        "resolved_at": null,
-        "sev": "warn",
-        "cells": [
-          "po-open2",
-          "inv-qty2"
-        ],
-        "locs": [
-          [
-            "inv",
-            "Commercial Invoice"
-          ],
-          [
-            "po",
-            "Buyer PO"
-          ]
-        ],
-        "body": "Invoice quantity (2050 PCS) deviates from PO quantity (5000 PCS) beyond allowed \u00b15% tolerance.",
-        "impact": "Split shipment overage beyond agreed order quantity.",
-        "fix": "Approve as authorized split shipment variance or request supplier re-issue at permitted balance."
       }
     ],
     "passed": [
+      "Carton parity verified: 110 CTNS on Invoice equals Packing List",
       "Weight physics verified: Net (1310.0 kg) < Gross (1360.0 kg)",
       "Currency USD consistent across all documents",
       "Incoterms FOB Mundra agreed on Buyer PO",
       "Port of loading INMUN1 matches shipping route"
     ],
-    "updated_at": "2026-11-03T15:11:54.455371+00:00",
-    "auto_resolved_in_latest_rev": []
+    "updated_at": "2026-11-04T03:18:20.756559+00:00",
+    "auto_resolved_in_latest_rev": [
+      "DISC-CARTONS",
+      "DISC-WEIGHT-INV",
+      "DISC-HS-1",
+      "DISC-PRICE-2"
+    ]
   },
   "Mp5JyACNrORlhQ": {
     "session_token": "Mp5JyACNrORlhQ",

@@ -217,6 +217,21 @@ async def re_audit(
             detail=f"Audit session '{token}' not found.",
         )
 
+    # Guardrail: Lock packet when already cleared
+    unresolved_count = (
+        existing_audit.summary.unresolved_count
+        if existing_audit.summary
+        else sum(
+            1 for d in existing_audit.discrepancies
+            if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
+        )
+    )
+    if unresolved_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Shipment packet is already cleared and locked for customs filing.",
+        )
+
     stored_files = session_store.get_session_files(token)
     po_bytes = stored_files.get("po", b"")
     stored_mock = stored_files.get("mock", False)
