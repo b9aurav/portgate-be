@@ -142,28 +142,20 @@ def extract_shipment_packet(
 
     models_to_try = [
         model or config.GEMINI_MODEL,
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
         config.GEMINI_FALLBACK_MODEL,
-        "gemini-2.5-flash",
+        "gemini-3.8-flash",
     ]
     unique_models = list(dict.fromkeys(models_to_try))
 
-    import pypdfium2 as pdfium  # type: ignore
-
     def _pdf_to_parts(data: bytes) -> list[types.Part]:
-        """Convert PDF bytes into fast inline PNG image parts (144 DPI) for OCR stability."""
+        """
+        Supplies native application/pdf parts directly to Gemini multimodal ingestion.
+        Native PDF tokenization is 5-10x faster and avoids high-resolution bitmap bloat.
+        """
         try:
-            pdf = pdfium.PdfDocument(data)
-            parts: list[types.Part] = []
-            for page in pdf:
-                bitmap = page.render(scale=2.0)
-                pil_img = bitmap.to_pil()
-                buf = io.BytesIO()
-                pil_img.save(buf, format="PNG", optimize=True)
-                parts.append(
-                    types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png")
-                )
-            pdf.close()
-            return parts if parts else [types.Part.from_bytes(data=data, mime_type="application/pdf")]
+            return [types.Part.from_bytes(data=data, mime_type="application/pdf")]
         except Exception:
             return [types.Part.from_bytes(data=data, mime_type="application/pdf")]
 
@@ -191,11 +183,8 @@ def extract_shipment_packet(
         response_schema=ExtractedShipmentPacket,
         temperature=0.0,
         max_output_tokens=4096,
-        http_options=types.HttpOptions(timeout=35000),
+        http_options=types.HttpOptions(timeout=60000),
     )
-
-    if hasattr(types, "ThinkingConfig"):
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
 
     gen_config = types.GenerateContentConfig(**config_kwargs)
 
@@ -203,7 +192,7 @@ def extract_shipment_packet(
     last_err = None
 
     for m in unique_models:
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 t0 = time.perf_counter()
                 logger.info("Calling Gemini model '%s' (attempt %d)...", m, attempt + 1)
@@ -217,11 +206,19 @@ def extract_shipment_packet(
                 break
             except errors.APIError as exc:
                 last_err = exc
-                if exc.code in (503, 429):
+                if exc.code == 429:
                     wait_sec = 2 ** attempt
-                    logger.warning("Model '%s' returned %s. Retrying in %ds...", m, exc.code, wait_sec)
+                    logger.warning("Model '%s' rate limited (429). Retrying in %ds...", m, wait_sec)
                     time.sleep(wait_sec)
                     continue
+                elif exc.code in (503, 504, 404, 400):
+                    logger.warning(
+                        "Model '%s' failed with %s (%s). Falling back to next available model...",
+                        m,
+                        exc.code,
+                        getattr(exc, "message", str(exc)),
+                    )
+                    break
                 raise
         if response is not None:
             break

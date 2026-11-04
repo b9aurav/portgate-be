@@ -16,8 +16,10 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from app.main import app
-from app.services.session_store import MAGIC_LINK_SESSIONS, session_store
+from app.services.session_store import session_store
 from app import config
+
+MAGIC_LINK_SESSIONS = session_store.raw_sessions
 
 __all__ = ["app", "session_store", "MAGIC_LINK_SESSIONS"]
 

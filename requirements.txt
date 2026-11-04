@@ -6,3 +6,4 @@ google-genai>=2.33.0
 python-dotenv==1.0.1
 anthropic==0.40.0
 pypdfium2==5.14.0
+supabase>=2.34.0

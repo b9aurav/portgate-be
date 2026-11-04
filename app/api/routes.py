@@ -15,7 +15,7 @@ import logging
 import secrets
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 
 from app import config
 from app.schemas.api import AuditResponse, PatchResolutionRequest, ShipmentListItem
@@ -32,6 +32,17 @@ from app.services.session_store import session_store
 logger = logging.getLogger("portgate.routes")
 
 router = APIRouter(tags=["compliance-engine"])
+
+
+# ---------------------------------------------------------------------------
+# Workspace Owner Dependency (Seamlessly accepts Supabase JWTs in future)
+# ---------------------------------------------------------------------------
+async def get_current_owner_id(
+    x_workspace_id: Optional[str] = Header(default=None, alias="X-Workspace-Id")
+) -> str:
+    if x_workspace_id and x_workspace_id.strip():
+        return x_workspace_id.strip()
+    return "sandbox_default"
 
 
 # ---------------------------------------------------------------------------
@@ -75,29 +86,48 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
-# Multi-Shipment Queue
+# Multi-Shipment Queue & Sandbox Workspace
 # ---------------------------------------------------------------------------
 @router.get(
     "/api/shipments",
     response_model=list[ShipmentListItem],
-    summary="List all active shipment audit sessions for Buyer Queue Dashboard",
+    summary="List all active shipment audit sessions for Buyer Queue Dashboard (scoped to sandbox owner)",
 )
-def list_shipments() -> list[ShipmentListItem]:
-    return session_store.list_shipments()
+def list_shipments(owner_id: str = Depends(get_current_owner_id)) -> list[ShipmentListItem]:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    return session_store.list_shipments(owner_id=owner_id)
 
 
 @router.delete(
     "/api/shipments/{token}",
     summary="Delete a shipment audit session",
 )
-def delete_shipment(token: str):
-    success = session_store.delete_session(token)
+def delete_shipment(token: str, owner_id: str = Depends(get_current_owner_id)):
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    success = session_store.delete_session(token=token, owner_id=owner_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Shipment session '{token}' not found",
         )
     return {"status": "success", "deleted_token": token}
+
+
+@router.post(
+    "/api/workspace/reset",
+    summary="Reset sandbox workspace to fresh initial demo state",
+)
+def reset_workspace(owner_id: str = Depends(get_current_owner_id)):
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    session_store.reset_workspace(owner_id=owner_id)
+    return {
+        "status": "success",
+        "owner_id": owner_id,
+        "message": "Sandbox workspace reset successfully.",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -114,17 +144,21 @@ async def audit(
     pl_pdf: Annotated[UploadFile, File(description="Packing List (PDF)")],
     tolerance_pct: Annotated[float, Form(ge=0.0, le=25.0)] = 5.0,
     mock: Annotated[bool, Form()] = False,
+    owner_id: str = Depends(get_current_owner_id),
 ) -> AuditResponse:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+
     po_bytes = await _read_upload(po_pdf, "Buyer PO PDF")
     inv_bytes = await _read_upload(inv_pdf, "Commercial Invoice PDF")
     pl_bytes = await _read_upload(pl_pdf, "Packing List PDF")
 
     if mock:
-        logger.info("Mock mode requested: generating test packet")
+        logger.info("Mock mode requested: generating test packet for owner %s", owner_id)
         extracted = build_mock_packet()
     else:
         try:
-            logger.info("Extracting 3 PDFs with Gemini multimodal ingestion")
+            logger.info("Extracting 3 PDFs with Gemini multimodal ingestion for owner %s", owner_id)
             extracted = extract_shipment_packet(po_bytes, inv_bytes, pl_bytes)
         except Exception as exc:
             logger.exception("PDF extraction failed")
@@ -156,9 +190,10 @@ async def audit(
         revision_number=1,
     )
 
-    # Store in session store with raw document bytes for revision matching
-    session_token = session_store.create_session(
+    # Store in session store scoped to owner_id with deduplication
+    stored_audit = session_store.create_or_replace_session(
         audit=audit_response,
+        owner_id=owner_id,
         files={
             "po": po_bytes,
             "inv": inv_bytes,
@@ -167,9 +202,8 @@ async def audit(
             "tolerance_pct": tolerance_pct,
         },
     )
-    audit_response.session_token = session_token
 
-    return audit_response
+    return stored_audit
 
 
 # ---------------------------------------------------------------------------

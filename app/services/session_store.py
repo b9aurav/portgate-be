@@ -1,18 +1,25 @@
 """
-app/services/session_store.py — Magic Link Session & Document Store.
+app/services/session_store.py — Multi-Tenant Supabase & Sandbox Session Store.
 
-Encapsulates dynamic session storage, re-audit revision numbering,
-and resolution state preservation across re-extractions.
+Encapsulates:
+- Supabase PostgreSQL persistence (table: public.shipments)
+- Per-browser sandbox isolation via `owner_id` (e.g. "sandbox_<uuid>")
+- Lazy-cloned demo seeding per new sandbox
+- Deduplication / upserting by (owner_id, po_invoice_key)
+- Re-audit revision incrementing & resolution state preservation
+- Graceful local JSON/in-memory fallback when Supabase is not configured
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app import config
 from app.schemas.api import AuditResponse, PatchResolutionRequest, ShipmentListItem
@@ -22,32 +29,58 @@ logger = logging.getLogger("portgate.sessions")
 
 class SessionStore:
     """
-    Manages in-memory audit sessions and file bytes with state preservation
-    and disk persistence across server restarts.
+    Multi-tenant session store managing pre-shipment audit packets in Supabase
+    PostgreSQL with per-browser sandbox isolation (owner_id) and graceful local fallback.
     """
 
     def __init__(self, persist_dir: Optional[Path] = None) -> None:
         self._sessions: Dict[str, AuditResponse] = {}
+        self._owners: Dict[str, str] = {}  # session_token -> owner_id
         self._files: Dict[str, Dict[str, Any]] = {}
         self._persist_dir = persist_dir or config.SESSIONS_PERSIST_DIR
         self._persist_file = self._persist_dir / "sessions_store.json"
+        self._seed_lock = threading.Lock()
 
-        # Attempt to load persisted sessions; seed canonical demo if missing
-        loaded = self._load_from_disk()
-        if not loaded or "shreeji-po-9921" not in self._sessions:
-            self._seed_default_demo_sessions()
-            self._save_to_disk()
+        # Initialize Supabase client if enabled
+        self._supabase = None
+        if config.SUPABASE_ENABLED:
+            try:
+                from supabase import create_client
+                self._supabase = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+                logger.info("Supabase client initialized successfully at %s", config.SUPABASE_URL)
+            except Exception as exc:
+                logger.warning("Failed to initialize Supabase client (%s). Falling back to local store.", exc)
+                self._supabase = None
+        else:
+            logger.info("Supabase persistence not configured; using local JSON fallback.")
 
+        # If Supabase is disabled or unavailable, initialize local fallback store
+        if not self._supabase:
+            loaded = self._load_from_disk()
+            if not loaded or "shreeji-po-9921" not in self._sessions:
+                self.ensure_workspace_seeded("sandbox_default")
+                self._save_to_disk()
+
+    @property
+    def raw_sessions(self) -> Dict[str, AuditResponse]:
+        """Provides backward compatibility for health probe session count."""
+        return self._sessions
+
+    # -------------------------------------------------------------------------
+    # Local JSON Fallback Persistence
+    # -------------------------------------------------------------------------
     def _save_to_disk(self) -> None:
-        """Persists all current sessions to a local JSON file."""
+        """Persists in-memory sessions to local JSON file when running without Supabase."""
         try:
             self._persist_dir.mkdir(parents=True, exist_ok=True)
             dump_data = {
-                tok: session.model_dump(mode="json")
+                tok: {
+                    "audit": session.model_dump(mode="json"),
+                    "owner_id": self._owners.get(tok, "sandbox_default"),
+                }
                 for tok, session in self._sessions.items()
             }
             self._persist_file.write_text(json.dumps(dump_data, indent=2), encoding="utf-8")
-            logger.debug("Persisted %d sessions to disk at %s", len(dump_data), self._persist_file)
         except Exception as exc:
             logger.warning("Failed to persist sessions to disk: %s", exc)
 
@@ -62,44 +95,15 @@ class SessionStore:
             data = json.loads(raw)
             if not isinstance(data, dict):
                 return False
-            for tok, s_dict in data.items():
+            for tok, item in data.items():
+                if isinstance(item, dict) and "audit" in item:
+                    s_dict = item["audit"]
+                    owner = item.get("owner_id", "sandbox_default")
+                else:
+                    s_dict = item
+                    owner = "sandbox_default"
                 self._sessions[tok] = AuditResponse.model_validate(s_dict)
-
-            # Backfill decision_trail for sessions with signed-off / resolved discrepancies
-            backfilled = False
-            for tok, session in self._sessions.items():
-                if not getattr(session, "decision_trail", None):
-                    trail = []
-                    for d in session.discrepancies:
-                        if d.resolution_state and d.resolution_state not in ("UNRESOLVED", "REVISION_REQUESTED"):
-                            act = (
-                                "ACCEPT_VARIANCE"
-                                if d.resolution_state == "ACCEPTED_EXCEPTION"
-                                else (
-                                    "ESCALATE_BROKER"
-                                    if d.resolution_state == "ESCALATED_TO_BROKER"
-                                    else ("CLEARED_BY_REVISION" if d.resolution_state == "CLEARED_BY_REVISION" else "REQUEST_REVISION")
-                                )
-                            )
-                            trail.append({
-                                "id": f"DEC-{d.id}",
-                                "discrepancy_id": d.id,
-                                "title": d.title,
-                                "previous_state": "UNRESOLVED",
-                                "new_state": d.resolution_state,
-                                "action": act,
-                                "reason_chip": d.resolution_reason_chip or ("Exception Accepted" if d.resolution_state == "ACCEPTED_EXCEPTION" else "Cleared"),
-                                "note": d.resolution_note,
-                                "actor_role": "SUPPLIER_PORTAL" if (d.resolved_by and "Supplier" in d.resolved_by) else "BUYER_WORKBENCH",
-                                "actor_name": d.resolved_by or "US Buyer Import Specialist",
-                                "timestamp": d.resolved_at or "00:00:00",
-                            })
-                    if trail:
-                        session.decision_trail = trail
-                        backfilled = True
-
-            if backfilled:
-                self._save_to_disk()
+                self._owners[tok] = owner
 
             logger.info("Loaded %d sessions from disk (%s)", len(self._sessions), self._persist_file)
             return len(self._sessions) > 0
@@ -107,66 +111,390 @@ class SessionStore:
             logger.warning("Failed to load sessions from %s: %s", self._persist_file, exc)
             return False
 
-    def _seed_default_demo_sessions(self) -> None:
-        """Seeds canonical demo sessions so dashboard has rich data out-of-the-box."""
-        now_iso = datetime.now(timezone.utc).isoformat()
-        try:
-            from app.services.extractor import build_mock_packet, extracted_to_shipment_packet
-            from app.services.linter import run_deterministic_audit
+    # -------------------------------------------------------------------------
+    # 1. Lazy-Clone Demo Shipments per New Sandbox (owner_id)
+    # -------------------------------------------------------------------------
+    def ensure_workspace_seeded(self, owner_id: str = "sandbox_default") -> None:
+        """
+        When list_shipments is requested for an owner_id with 0 rows,
+        automatically clones the canonical demo shipment for that owner_id
+        with a deterministic cryptographic session_token and thread synchronization.
+        """
+        owner_id = owner_id.strip() if owner_id else "sandbox_default"
 
-            # 1. Canonical Shreeji Textiles (Action Required, Rev 1)
-            token = "shreeji-po-9921"
-            if token not in self._sessions:
+        with self._seed_lock:
+            # Check if already seeded in Supabase
+            if self._supabase:
+                try:
+                    res = (
+                        self._supabase.table("shipments")
+                        .select("session_token")
+                        .eq("owner_id", owner_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if res.data and len(res.data) > 0:
+                        return
+                except Exception as exc:
+                    logger.warning("Supabase check in ensure_workspace_seeded failed: %s", exc)
+
+            # Check in local cache
+            if any(oid == owner_id for oid in self._owners.values()):
+                return
+
+            # Generate fresh seed shipment with deterministic token derived from owner_id
+            try:
+                from app.services.extractor import build_mock_packet, extracted_to_shipment_packet
+                from app.services.linter import run_deterministic_audit
+
+                seed_hash = hashlib.sha256(f"{owner_id}:canonical_seed".encode()).hexdigest()[:16]
+                fresh_token = f"shp_{seed_hash}"
+                now_iso = datetime.now(timezone.utc).isoformat()
                 packet = extracted_to_shipment_packet(build_mock_packet())
-                default_audit = run_deterministic_audit(
+                seed_audit = run_deterministic_audit(
                     packet=packet,
-                    session_token=token,
+                    session_token=fresh_token,
                     revision_number=1,
                 )
-                default_audit.updated_at = now_iso
-                self._sessions[token] = default_audit
-                self._files[token] = {
+                seed_audit.updated_at = now_iso
+
+                po_num = packet.buyer_po.po_number if packet.buyer_po else "PO-PCR-45012"
+                inv_num = (
+                    packet.commercial_invoice.invoice_number
+                    if packet.commercial_invoice
+                    else "SHR/EXP/26-27/0412"
+                )
+                po_invoice_key = f"{po_num}::{inv_num}"
+
+                # Persist to Supabase if available (upsert prevents duplicate key collisions)
+                if self._supabase:
+                    row = {
+                        "session_token": fresh_token,
+                        "owner_id": owner_id,
+                        "po_invoice_key": po_invoice_key,
+                        "audit_payload": seed_audit.model_dump(mode="json"),
+                        "updated_at": now_iso,
+                    }
+                    self._supabase.table("shipments").upsert(row).execute()
+                    logger.info("Seeded sandbox workspace '%s' in Supabase with token %s", owner_id, fresh_token)
+
+                # Update cache
+                self._sessions[fresh_token] = seed_audit
+                self._owners[fresh_token] = owner_id
+                self._files[fresh_token] = {
                     "po": b"",
                     "inv": b"",
                     "pl": b"",
                     "mock": True,
                     "tolerance_pct": 5.0,
                 }
-                logger.info("Seeded canonical demo session '%s'", token)
-        except Exception as exc:
-            logger.warning("Failed to seed default session: %s", exc)
+                if not self._supabase:
+                    self._save_to_disk()
+            except Exception as exc:
+                logger.exception("Failed to seed sandbox workspace for owner %s: %s", owner_id, exc)
 
-    def create_session(
+    # -------------------------------------------------------------------------
+    # 2. Upsert by (owner_id, po_invoice_key) on New Audit
+    # -------------------------------------------------------------------------
+    def create_or_replace_session(
         self,
         audit: AuditResponse,
+        owner_id: str = "sandbox_default",
         files: Optional[Dict[str, Any]] = None,
-        token: Optional[str] = None,
-    ) -> str:
+    ) -> AuditResponse:
         """
-        Creates and stores a new audit session with a unique URL-safe token.
+        Creates or updates a session scoped to owner_id.
+        If an existing row matches (owner_id, po_invoice_key), reuses its session_token
+        and resets to revision 1 (overwriting cleanly instead of creating queue duplicates).
         """
-        session_token = token or secrets.token_urlsafe(10)
+        owner_id = owner_id.strip() if owner_id else "sandbox_default"
+
+        po_num = "PO"
+        inv_num = "INV"
+        if audit.packet:
+            if audit.packet.buyer_po and audit.packet.buyer_po.po_number:
+                po_num = audit.packet.buyer_po.po_number
+            if audit.packet.commercial_invoice and audit.packet.commercial_invoice.invoice_number:
+                inv_num = audit.packet.commercial_invoice.invoice_number
+        elif audit.metadata:
+            po_num = audit.metadata.po_number or "PO"
+            inv_num = audit.metadata.invoice_no or "INV"
+
+        po_invoice_key = f"{po_num}::{inv_num}"
+        existing_token: Optional[str] = None
+
+        # Check in Supabase
+        if self._supabase:
+            try:
+                res = (
+                    self._supabase.table("shipments")
+                    .select("session_token")
+                    .eq("owner_id", owner_id)
+                    .eq("po_invoice_key", po_invoice_key)
+                    .limit(1)
+                    .execute()
+                )
+                if res.data and len(res.data) > 0:
+                    existing_token = res.data[0]["session_token"]
+            except Exception as exc:
+                logger.warning("Supabase query in create_or_replace_session failed: %s", exc)
+
+        # Fallback check in local memory
+        if not existing_token:
+            for tok, s in self._sessions.items():
+                if self._owners.get(tok) == owner_id:
+                    s_po = s.packet.buyer_po.po_number if s.packet and s.packet.buyer_po else ""
+                    s_inv = (
+                        s.packet.commercial_invoice.invoice_number
+                        if s.packet and s.packet.commercial_invoice
+                        else ""
+                    )
+                    if f"{s_po}::{s_inv}" == po_invoice_key:
+                        existing_token = tok
+                        break
+
+        session_token = existing_token or f"shp_{secrets.token_urlsafe(12)}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         audit.session_token = session_token
         audit.revision_number = 1
-        audit.updated_at = datetime.now(timezone.utc).isoformat()
-        self._sessions[session_token] = audit
+        audit.updated_at = now_iso
 
         if files:
             self._files[session_token] = files
         else:
             self._files.setdefault(session_token, {})
 
-        self._save_to_disk()
-        logger.info(
-            "Created session %s (status=%s, findings=%d)",
-            session_token,
-            audit.summary.status,
-            audit.summary.total_findings,
-        )
-        return session_token
+        # Persist to Supabase
+        if self._supabase:
+            try:
+                row = {
+                    "session_token": session_token,
+                    "owner_id": owner_id,
+                    "po_invoice_key": po_invoice_key,
+                    "audit_payload": audit.model_dump(mode="json"),
+                    "updated_at": now_iso,
+                }
+                self._supabase.table("shipments").upsert(row).execute()
+                logger.info(
+                    "Upserted shipment %s (owner=%s, key=%s) in Supabase",
+                    session_token,
+                    owner_id,
+                    po_invoice_key,
+                )
+            except Exception as exc:
+                logger.exception("Supabase upsert failed: %s", exc)
 
+        # Update cache
+        self._sessions[session_token] = audit
+        self._owners[session_token] = owner_id
+        if not self._supabase:
+            self._save_to_disk()
+
+        return audit
+
+    def create_session(
+        self,
+        audit: AuditResponse,
+        files: Optional[Dict[str, Any]] = None,
+        token: Optional[str] = None,
+        owner_id: str = "sandbox_default",
+    ) -> str:
+        """Backward-compatible helper returning session_token string."""
+        if token:
+            audit.session_token = token
+        res = self.create_or_replace_session(audit=audit, owner_id=owner_id, files=files)
+        return res.session_token
+
+    # -------------------------------------------------------------------------
+    # 3. List Shipments Scoped to owner_id
+    # -------------------------------------------------------------------------
+    def list_shipments(self, owner_id: str = "sandbox_default") -> List[ShipmentListItem]:
+        """
+        Generates multi-shipment summary objects for the Queue Dashboard table,
+        strictly scoped to owner_id. Sorts unresolved shipments first, then newest updated_at.
+        """
+        owner_id = owner_id.strip() if owner_id else "sandbox_default"
+        self.ensure_workspace_seeded(owner_id)
+
+        rows: List[Dict[str, Any]] = []
+
+        # 1. Fetch from Supabase if active
+        if self._supabase:
+            try:
+                res = (
+                    self._supabase.table("shipments")
+                    .select("session_token, owner_id, po_invoice_key, audit_payload, updated_at")
+                    .eq("owner_id", owner_id)
+                    .order("updated_at", desc=True)
+                    .execute()
+                )
+                raw_rows = res.data or []
+
+                # Deduplicate by po_invoice_key (keeps newest, self-heals any legacy duplicate rows)
+                seen_keys: set[str] = set()
+                deduped_rows: List[Dict[str, Any]] = []
+                duplicate_tokens_to_prune: List[str] = []
+
+                for r in raw_rows:
+                    key = r.get("po_invoice_key")
+                    if key and key in seen_keys:
+                        duplicate_tokens_to_prune.append(r["session_token"])
+                        continue
+                    if key:
+                        seen_keys.add(key)
+                    deduped_rows.append(r)
+
+                if duplicate_tokens_to_prune:
+                    for dup_tok in duplicate_tokens_to_prune:
+                        try:
+                            self._supabase.table("shipments").delete().eq("session_token", dup_tok).execute()
+                            logger.info("Self-healed duplicate seed row %s for owner %s", dup_tok, owner_id)
+                        except Exception as exc:
+                            logger.warning("Failed to prune duplicate legacy token %s: %s", dup_tok, exc)
+
+                rows = deduped_rows
+            except Exception as exc:
+                logger.warning("Supabase list_shipments query failed (%s). Falling back to local cache.", exc)
+                rows = []
+
+        # 2. Map Supabase rows to ShipmentListItem
+        results: List[ShipmentListItem] = []
+        if rows:
+            for r in rows:
+                tok = r["session_token"]
+                payload = r.get("audit_payload") or {}
+                # Update memory cache
+                try:
+                    s = AuditResponse.model_validate(payload)
+                    self._sessions[tok] = s
+                    self._owners[tok] = owner_id
+                except Exception as exc:
+                    logger.warning("Failed to validate audit_payload for %s: %s", tok, exc)
+                    continue
+
+                item = self._build_shipment_list_item(tok, s)
+                results.append(item)
+        else:
+            # Fallback to in-memory / local storage
+            seen_local_keys: set[str] = set()
+            for tok, s in self._sessions.items():
+                if self._owners.get(tok) == owner_id:
+                    po = s.packet.buyer_po.po_number if s.packet and s.packet.buyer_po else ""
+                    inv = s.packet.commercial_invoice.invoice_number if s.packet and s.packet.commercial_invoice else ""
+                    key = f"{po}::{inv}"
+                    if key in seen_local_keys:
+                        continue
+                    seen_local_keys.add(key)
+                    results.append(self._build_shipment_list_item(tok, s))
+
+        # Sort: unresolved shipments first, then newest updated_at first
+        results.sort(key=lambda x: str(x.updated_at), reverse=True)
+        results.sort(key=lambda x: 0 if x.unresolved_count > 0 else 1)
+        return results
+
+    def _build_shipment_list_item(self, token: str, s: AuditResponse) -> ShipmentListItem:
+        """Converts an AuditResponse model into a clean ShipmentListItem."""
+        packet = s.packet
+        meta = s.metadata or {}
+
+        unresolved_items = [
+            d for d in s.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
+        ]
+        unresolved_count = len(unresolved_items)
+        det_count = sum(1 for d in unresolved_items if d.category == "DETERMINISTIC_CONFLICT")
+        com_count = sum(1 for d in unresolved_items if d.category == "COMMERCIAL_VARIANCE")
+        adv_count = sum(1 for d in unresolved_items if d.category == "COMPLIANCE_ADVISORY")
+
+        # Status computation
+        if unresolved_count == 0:
+            status_str = "CLEARED_WITH_EXCEPTIONS" if s.discrepancies else "VERIFIED_CLEAN"
+        elif any(d.resolution_state == "REVISION_REQUESTED" for d in s.discrepancies):
+            status_str = "AWAITING_SUPPLIER_REVISION"
+        elif det_count == 0 and (com_count > 0 or adv_count > 0):
+            status_str = "BUYER_REVIEW"
+        else:
+            status_str = "ACTION_REQUIRED"
+
+        shipment_id = packet.shipment_id if packet else (s.shipment_ref or "SHP-UNKNOWN")
+        corridor = (
+            packet.corridor
+            if packet and packet.corridor
+            else f"{meta.get('port_of_loading', 'INMUN1')} -> {meta.get('port_of_discharge', 'USLAX')}"
+        )
+        po_number = (
+            packet.buyer_po.po_number
+            if packet and packet.buyer_po
+            else meta.get("po_number", "PO-UNKNOWN")
+        )
+        invoice_number = (
+            packet.commercial_invoice.invoice_number
+            if packet and packet.commercial_invoice
+            else meta.get("invoice_no", "INV-UNKNOWN")
+        )
+        exporter_name = (
+            packet.commercial_invoice.exporter_name
+            if packet and packet.commercial_invoice
+            else meta.get("exporter_name", "Exporter")
+        )
+        buyer_name = (
+            packet.buyer_po.buyer_name
+            if packet and packet.buyer_po
+            else meta.get("importer_name", "Pacific Coast Retail Group LLC")
+        )
+        total_usd = float(
+            packet.commercial_invoice.total_invoice_value_usd
+            if packet and packet.commercial_invoice
+            else 0.0
+        )
+        updated_at = s.updated_at or meta.get("invoice_date", datetime.now(timezone.utc).isoformat())
+
+        return ShipmentListItem(
+            session_token=token,
+            shipment_id=shipment_id,
+            corridor=corridor,
+            po_number=po_number,
+            invoice_number=invoice_number,
+            exporter_name=exporter_name,
+            buyer_name=buyer_name,
+            total_invoice_usd=total_usd,
+            revision_number=s.revision_number,
+            status=status_str,
+            unresolved_count=unresolved_count,
+            deterministic_conflict_count=det_count,
+            commercial_variance_count=com_count,
+            compliance_advisory_count=adv_count,
+            updated_at=updated_at,
+        )
+
+    # -------------------------------------------------------------------------
+    # 4. Token-Scoped Operations (Workbench & Zero-Login Supplier Portal)
+    # -------------------------------------------------------------------------
     def get_session(self, token: str) -> Optional[AuditResponse]:
-        """Fetches the current AuditResponse for the given token."""
+        """
+        Fetches the current AuditResponse by session_token.
+        Public & zero-auth: does NOT filter by owner_id so external suppliers
+        opening magic links from any browser can view the session.
+        """
+        # Query Supabase
+        if self._supabase:
+            try:
+                res = (
+                    self._supabase.table("shipments")
+                    .select("*")
+                    .eq("session_token", token)
+                    .limit(1)
+                    .execute()
+                )
+                if res.data and len(res.data) > 0:
+                    row = res.data[0]
+                    session = AuditResponse.model_validate(row["audit_payload"])
+                    self._sessions[token] = session
+                    self._owners[token] = row["owner_id"]
+                    return session
+            except Exception as exc:
+                logger.warning("Supabase get_session failed for token %s: %s", token, exc)
+
         return self._sessions.get(token)
 
     def get_session_files(self, token: str) -> Dict[str, Any]:
@@ -181,12 +509,12 @@ class SessionStore:
     ) -> AuditResponse:
         """
         Applies a revised audit against an existing session:
-        1. Increments revision_number (old + 1)
-        2. Preserves prior buyer resolutions (ACCEPTED_EXCEPTION, ESCALATED_TO_BROKER)
-        3. Recalculates summary status and unresolved counts
-        4. Updates stored files and saves to session store
+        1. Checks lock guardrail (rejects if already cleared)
+        2. Preserves prior buyer sign-offs (ACCEPTED_EXCEPTION, ESCALATED_TO_BROKER)
+        3. Identifies fixed items and flags them as CLEARED_BY_REVISION
+        4. Increments revision number and updates Supabase while keeping original owner_id
         """
-        old_audit = self._sessions.get(token)
+        old_audit = self.get_session(token)
         old_revision = old_audit.revision_number if old_audit else 1
         new_revision = old_revision + 1
 
@@ -201,7 +529,6 @@ class SessionStore:
         if old_audit:
             for new_d in new_audit.discrepancies:
                 for old_d in old_audit.discrepancies:
-                    # Match by id or rule_id
                     if (old_d.id == new_d.id or old_d.rule_id == new_d.rule_id) and old_d.resolution_state in (
                         "ACCEPTED_EXCEPTION",
                         "ESCALATED_TO_BROKER",
@@ -215,7 +542,6 @@ class SessionStore:
 
             # Identify discrepancies from previous revision that are now FIXED by supplier
             for old_d in old_audit.discrepancies:
-                # Check if this discrepancy is still triggered in new_audit
                 is_still_triggered = any(
                     new_d.id == old_d.id or new_d.rule_id == old_d.rule_id
                     for new_d in new_audit.discrepancies
@@ -229,7 +555,6 @@ class SessionStore:
                     fixed_item.resolved_by = f"Supplier Upload (Rev v{new_revision})"
                     fixed_item.resolved_at = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
-                    # Extract specific fixed values for the note
                     rule_key = (old_d.rule_id or old_d.id or "").upper()
                     if "CARTON" in rule_key:
                         inv_ctns = sum(new_audit.cartons.get("inv", [])) if isinstance(new_audit.cartons, dict) else 0
@@ -249,13 +574,10 @@ class SessionStore:
 
                     auto_resolved_items.append(fixed_item)
                 elif old_d.resolution_state == "CLEARED_BY_REVISION":
-                    # Retain earlier auto-resolved items from v2, v3
                     auto_resolved_items.append(old_d.model_copy(deep=True))
 
-            # Include auto_resolved_items in discrepancies & items for the Resolved tab
             new_audit.discrepancies.extend(auto_resolved_items)
 
-            # Mirror preserved resolutions to items list
             for it in new_audit.items:
                 for d in new_audit.discrepancies:
                     if it.id == d.id:
@@ -266,13 +588,12 @@ class SessionStore:
                         it.resolved_at = d.resolved_at
                         break
 
-            # Also ensure all auto_resolved_items are present in items list
             item_ids = {it.id for it in new_audit.items}
             for auto_item in auto_resolved_items:
                 if auto_item.id not in item_ids:
                     new_audit.items.append(auto_item)
 
-        # Preserve decision_trail and record auto-resolved supplier entries
+        # Preserve decision_trail
         if old_audit and getattr(old_audit, "decision_trail", None):
             new_audit.decision_trail = list(old_audit.decision_trail)
         else:
@@ -296,7 +617,6 @@ class SessionStore:
 
         new_audit.auto_resolved_in_latest_rev = auto_resolved_ids
 
-        # Recompute summary with preserved resolutions
         unresolved = sum(
             1 for d in new_audit.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
         )
@@ -311,15 +631,23 @@ class SessionStore:
             stored = self._files.setdefault(token, {})
             stored.update(new_files)
 
+        owner_id = self._owners.get(token, "sandbox_default")
+
+        # Persist to Supabase
+        if self._supabase:
+            try:
+                self._supabase.table("shipments").update({
+                    "audit_payload": new_audit.model_dump(mode="json"),
+                    "updated_at": new_audit.updated_at,
+                }).eq("session_token", token).execute()
+                logger.info("Updated re-audit in Supabase for %s (rev v%d)", token, new_revision)
+            except Exception as exc:
+                logger.exception("Supabase update_session_reaudit failed: %s", exc)
+
         self._sessions[token] = new_audit
-        self._save_to_disk()
-        logger.info(
-            "Session %s updated to rev v%d (status=%s, unresolved=%d)",
-            token,
-            new_revision,
-            new_audit.summary.status,
-            unresolved,
-        )
+        if not self._supabase:
+            self._save_to_disk()
+
         return new_audit
 
     def resolve_discrepancy(
@@ -329,9 +657,10 @@ class SessionStore:
         patch_data: PatchResolutionRequest,
     ) -> AuditResponse:
         """
-        Updates the resolution state of a specific discrepancy inside the session.
+        Updates the resolution state of a specific discrepancy inside the session
+        and commits to Supabase.
         """
-        session = self._sessions.get(token)
+        session = self.get_session(token)
         if not session:
             raise KeyError(f"Audit session '{token}' not found.")
 
@@ -343,8 +672,10 @@ class SessionStore:
         timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
         found = False
+        prior_state = "UNRESOLVED"
         for disc in session.discrepancies:
             if disc.id == discrepancy_id:
+                prior_state = disc.resolution_state or "UNRESOLVED"
                 disc.resolution_state = patch_data.resolution_state
                 disc.resolution_reason_chip = patch_data.resolution_reason_chip
                 disc.resolution_note = patch_data.resolution_note
@@ -387,7 +718,7 @@ class SessionStore:
             "id": f"DEC-{int(datetime.now(timezone.utc).timestamp())}-{secrets.token_hex(2)}",
             "discrepancy_id": discrepancy_id,
             "title": target_title,
-            "previous_state": "UNRESOLVED",
+            "previous_state": prior_state,
             "new_state": patch_data.resolution_state,
             "action": action_type,
             "reason_chip": patch_data.resolution_reason_chip or "",
@@ -410,101 +741,84 @@ class SessionStore:
         )
         session.updated_at = datetime.now(timezone.utc).isoformat()
 
-        self._save_to_disk()
-        logger.info(
-            "Discrepancy %s updated: state=%s unresolved=%d",
-            discrepancy_id,
-            patch_data.resolution_state,
-            unresolved,
-        )
+        # Update Supabase
+        if self._supabase:
+            try:
+                self._supabase.table("shipments").update({
+                    "audit_payload": session.model_dump(mode="json"),
+                    "updated_at": session.updated_at,
+                }).eq("session_token", token).execute()
+                logger.info("Updated resolution in Supabase for %s / %s", token, discrepancy_id)
+            except Exception as exc:
+                logger.exception("Supabase resolve_discrepancy failed: %s", exc)
+
+        self._sessions[token] = session
+        if not self._supabase:
+            self._save_to_disk()
+
         return session
 
-    def delete_session(self, token: str) -> bool:
+    # -------------------------------------------------------------------------
+    # 5. Delete & Reset Workspace
+    # -------------------------------------------------------------------------
+    def delete_session(self, token: str, owner_id: Optional[str] = None) -> bool:
         """
-        Deletes a session from in-memory cache and persisted storage on disk.
+        Deletes a session from Supabase and in-memory cache, optionally checking owner_id.
         """
         deleted = False
+
+        if self._supabase:
+            try:
+                query = self._supabase.table("shipments").delete().eq("session_token", token)
+                if owner_id and owner_id != "sandbox_default":
+                    query = query.eq("owner_id", owner_id)
+                res = query.execute()
+                deleted = bool(res.data and len(res.data) > 0)
+                logger.info("Deleted session %s in Supabase (result=%s)", token, deleted)
+            except Exception as exc:
+                logger.warning("Supabase delete failed: %s", exc)
+
         if token in self._sessions:
             del self._sessions[token]
             deleted = True
+        if token in self._owners:
+            del self._owners[token]
         if token in self._files:
             del self._files[token]
-            deleted = True
-        if deleted:
+
+        if not self._supabase and deleted:
             self._save_to_disk()
-            logger.info("Session %s deleted", token)
+
         return deleted
 
-    def list_shipments(self) -> list[ShipmentListItem]:
+    def reset_workspace(self, owner_id: str) -> None:
         """
-        Generates multi-shipment summary objects for the Queue Dashboard table.
-        Sorts unresolved shipments first, ordered by most recent updated_at.
+        Deletes all rows belonging to owner_id and immediately re-seeds
+        a fresh demo shipment for this sandbox.
         """
-        results: list[ShipmentListItem] = []
-        for token, s in self._sessions.items():
-            packet = s.packet
-            meta = s.metadata or {}
+        owner_id = owner_id.strip() if owner_id else "sandbox_default"
 
-            unresolved_items = [
-                d for d in s.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
-            ]
-            unresolved_count = len(unresolved_items)
-            det_count = sum(1 for d in unresolved_items if d.category == "DETERMINISTIC_CONFLICT")
-            com_count = sum(1 for d in unresolved_items if d.category == "COMMERCIAL_VARIANCE")
-            adv_count = sum(1 for d in unresolved_items if d.category == "COMPLIANCE_ADVISORY")
+        if self._supabase:
+            try:
+                self._supabase.table("shipments").delete().eq("owner_id", owner_id).execute()
+                logger.info("Cleared all shipments for owner %s in Supabase", owner_id)
+            except Exception as exc:
+                logger.warning("Supabase reset_workspace failed: %s", exc)
 
-            # Granular status calculation
-            if unresolved_count == 0:
-                status_str = "CLEARED_WITH_EXCEPTIONS" if s.discrepancies else "VERIFIED_CLEAN"
-            elif any(d.resolution_state == "REVISION_REQUESTED" for d in s.discrepancies):
-                status_str = "AWAITING_SUPPLIER_REVISION"
-            elif det_count == 0 and (com_count > 0 or adv_count > 0):
-                status_str = "BUYER_REVIEW"
-            else:
-                status_str = "ACTION_REQUIRED"
+        # Clear in-memory
+        tokens_to_del = [tok for tok, oid in self._owners.items() if oid == owner_id]
+        for tok in tokens_to_del:
+            self._sessions.pop(tok, None)
+            self._owners.pop(tok, None)
+            self._files.pop(tok, None)
 
-            shipment_id = packet.shipment_id or s.shipment_ref or "SHP-UNKNOWN"
-            corridor = packet.corridor or f"{meta.get('port_of_loading', 'INMUN1')} -> {meta.get('port_of_discharge', 'USLAX')}"
-            po_number = packet.buyer_po.po_number if packet.buyer_po else meta.get("po_number", "PO-UNKNOWN")
-            invoice_number = packet.commercial_invoice.invoice_number if packet.commercial_invoice else meta.get("invoice_no", "INV-UNKNOWN")
-            exporter_name = packet.commercial_invoice.exporter_name if packet.commercial_invoice else meta.get("exporter_name", "Exporter")
-            buyer_name = packet.buyer_po.buyer_name if packet.buyer_po else meta.get("importer_name", "Pacific Coast Retail Group LLC")
-            total_usd = float(packet.commercial_invoice.total_invoice_value_usd if packet.commercial_invoice else 0.0)
+        if not self._supabase:
+            self._save_to_disk()
 
-            updated_at = s.updated_at or meta.get("invoice_date", datetime.now(timezone.utc).isoformat())
-
-            results.append(
-                ShipmentListItem(
-                    session_token=token,
-                    shipment_id=shipment_id,
-                    corridor=corridor,
-                    po_number=po_number,
-                    invoice_number=invoice_number,
-                    exporter_name=exporter_name,
-                    buyer_name=buyer_name,
-                    total_invoice_usd=total_usd,
-                    revision_number=s.revision_number,
-                    status=status_str,
-                    unresolved_count=unresolved_count,
-                    deterministic_conflict_count=det_count,
-                    commercial_variance_count=com_count,
-                    compliance_advisory_count=adv_count,
-                    updated_at=updated_at,
-                )
-            )
-
-        # Sort: unresolved shipments first, then newest updated_at first
-        results.sort(key=lambda x: str(x.updated_at), reverse=True)
-        results.sort(key=lambda x: 0 if x.unresolved_count > 0 else 1)
-        return results
-
-    @property
-    def raw_sessions(self) -> Dict[str, AuditResponse]:
-        """Direct access for legacy tests or inspection."""
-        return self._sessions
+        # Re-seed clean demo packet for this sandbox
+        self.ensure_workspace_seeded(owner_id)
 
 
 # Global singleton instance
 session_store = SessionStore()
 MAGIC_LINK_SESSIONS = session_store.raw_sessions
-
