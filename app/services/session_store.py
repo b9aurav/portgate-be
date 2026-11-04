@@ -243,12 +243,16 @@ class SessionStore:
         if not existing_token:
             for tok, s in self._sessions.items():
                 if self._owners.get(tok) == owner_id:
-                    s_po = s.packet.buyer_po.po_number if s.packet and s.packet.buyer_po else ""
-                    s_inv = (
-                        s.packet.commercial_invoice.invoice_number
-                        if s.packet and s.packet.commercial_invoice
-                        else ""
-                    )
+                    s_po = ""
+                    s_inv = ""
+                    if s.packet:
+                        if s.packet.buyer_po and s.packet.buyer_po.po_number:
+                            s_po = s.packet.buyer_po.po_number
+                        if s.packet.commercial_invoice and s.packet.commercial_invoice.invoice_number:
+                            s_inv = s.packet.commercial_invoice.invoice_number
+                    elif s.metadata:
+                        s_po = s.metadata.get("po_number", "")
+                        s_inv = s.metadata.get("invoice_no", "")
                     if f"{s_po}::{s_inv}" == po_invoice_key:
                         existing_token = tok
                         break
@@ -515,6 +519,18 @@ class SessionStore:
         4. Increments revision number and updates Supabase while keeping original owner_id
         """
         old_audit = self.get_session(token)
+        if old_audit:
+            unresolved = (
+                old_audit.summary.unresolved_count
+                if old_audit.summary
+                else sum(
+                    1 for d in old_audit.discrepancies
+                    if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
+                )
+            )
+            if unresolved == 0:
+                raise ValueError("Shipment packet is already cleared and locked for customs filing")
+
         old_revision = old_audit.revision_number if old_audit else 1
         new_revision = old_revision + 1
 
@@ -765,12 +781,17 @@ class SessionStore:
         """
         Deletes a session from Supabase and in-memory cache, optionally checking owner_id.
         """
+        if owner_id:
+            actual_owner = self._owners.get(token)
+            if actual_owner and actual_owner != owner_id:
+                return False
+
         deleted = False
 
         if self._supabase:
             try:
                 query = self._supabase.table("shipments").delete().eq("session_token", token)
-                if owner_id and owner_id != "sandbox_default":
+                if owner_id:
                     query = query.eq("owner_id", owner_id)
                 res = query.execute()
                 deleted = bool(res.data and len(res.data) > 0)
@@ -779,6 +800,8 @@ class SessionStore:
                 logger.warning("Supabase delete failed: %s", exc)
 
         if token in self._sessions:
+            if self._supabase and not deleted:
+                return False
             del self._sessions[token]
             deleted = True
         if token in self._owners:
