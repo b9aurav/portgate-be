@@ -27,6 +27,60 @@ from app.schemas.api import AuditResponse, PatchResolutionRequest, ShipmentListI
 logger = logging.getLogger("portgate.sessions")
 
 
+def _deduplicate_decision_trail(trail: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Ensures each discrepancy clearance is recorded only once per actual resolution event,
+    preventing duplicate entries across subsequent revision re-audits.
+    Preserves the earliest/original resolution event when deduplicating.
+    """
+    if not trail:
+        return []
+    seen_ids = set()
+    seen_disc_cleared = set()
+    cleaned_rev = []
+    # Process from oldest to newest (trail has newest first at index 0)
+    for entry in reversed(trail):
+        entry_id = entry.get("id")
+        if entry_id and entry_id in seen_ids:
+            continue
+        if entry_id:
+            seen_ids.add(entry_id)
+
+        disc_id = entry.get("discrepancy_id")
+        action = entry.get("action")
+        # Deduplicate redundant clearance entries for the same discrepancy
+        if disc_id and (action == "CLEARED_BY_REVISION" or action == "CLEARED_IN_REVISION"):
+            if disc_id in seen_disc_cleared:
+                continue
+            seen_disc_cleared.add(disc_id)
+
+        cleaned_rev.append(entry)
+
+    return list(reversed(cleaned_rev))
+
+
+def _append_decision_entry(trail: List[Dict[str, Any]], entry: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Appends a new decision log entry to trail with a cryptographic chained hash.
+    Since newest entries are at index 0, prev_entry_hash is obtained from the most
+    recent prior entry (trail[0]) or 'GENESIS_ROOT'.
+    """
+    prev_hash = "GENESIS_ROOT"
+    if trail and isinstance(trail, list) and len(trail) > 0:
+        prev_hash = trail[0].get("entry_hash") or "GENESIS_ROOT"
+
+    timestamp = entry.get("timestamp", "")
+    actor = entry.get("actor_name", "")
+    action = entry.get("action", "")
+    sig_raw = f"{prev_hash}::{timestamp}::{actor}::{action}".encode()
+    entry_hash = hashlib.sha256(sig_raw).hexdigest()[:16]
+
+    entry["prev_entry_hash"] = prev_hash
+    entry["entry_hash"] = entry_hash
+    trail.insert(0, entry)
+    return entry
+
+
 class SessionStore:
     """
     Multi-tenant session store managing pre-shipment audit packets in Supabase
@@ -500,13 +554,17 @@ class SessionStore:
                     session = AuditResponse.model_validate(row["audit_payload"])
                     self._sessions[token] = session
                     self._owners[token] = row["owner_id"]
+                    session.decision_trail = _deduplicate_decision_trail(getattr(session, "decision_trail", []) or [])
                     return session
             except Exception as exc:
                 logger.warning("Supabase get_session failed for token %s: %s", token, exc)
 
         # 2. Check local memory
         if token in self._sessions:
-            return self._sessions[token]
+            session = self._sessions[token]
+            if getattr(session, "decision_trail", None):
+                session.decision_trail = _deduplicate_decision_trail(session.decision_trail)
+            return session
 
         # 3. Check local disk cache fallback (loads canonical pre-seeded packets like shreeji-po-9921)
         self._load_from_disk()
@@ -528,7 +586,10 @@ class SessionStore:
                     logger.info("Auto-synced disk token '%s' into Supabase", token)
                 except Exception as exc:
                     logger.warning("Failed to auto-sync disk session '%s' to Supabase: %s", token, exc)
-            return self._sessions[token]
+            session = self._sessions[token]
+            if getattr(session, "decision_trail", None):
+                session.decision_trail = _deduplicate_decision_trail(session.decision_trail)
+            return session
 
         # 4. Canonical alias fallback: if token is shreeji-po-9921, generate on demand
         if token == "shreeji-po-9921":
@@ -550,6 +611,8 @@ class SessionStore:
                         }).execute()
                     except Exception as exc:
                         logger.warning("Failed to upsert shreeji-po-9921: %s", exc)
+                if getattr(seed_audit, "decision_trail", None):
+                    seed_audit.decision_trail = _deduplicate_decision_trail(seed_audit.decision_trail)
                 return seed_audit
             except Exception as exc:
                 logger.warning("Failed to generate canonical shreeji-po-9921: %s", exc)
@@ -583,7 +646,8 @@ class SessionStore:
                     if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
                 )
             )
-            if unresolved == 0:
+            is_reopened = getattr(old_audit, "reopened_for_revision", False)
+            if unresolved == 0 and not is_reopened:
                 raise ValueError("Shipment packet is already cleared and locked for customs filing")
 
         old_revision = old_audit.revision_number if old_audit else 1
@@ -591,6 +655,7 @@ class SessionStore:
 
         new_audit.session_token = token
         new_audit.revision_number = new_revision
+        new_audit.reopened_for_revision = False
         new_audit.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Preserve security & confidence metadata from previous revision
@@ -605,7 +670,8 @@ class SessionStore:
                 new_audit.low_confidence_fields = list(old_audit.low_confidence_fields)
 
         auto_resolved_ids: list[str] = []
-        auto_resolved_items: list[Any] = []
+        newly_resolved_items: list[Any] = []
+        carried_forward_items: list[Any] = []
 
         # Preserve Buyer Sign-Offs across revisions and track auto-resolved items
         if old_audit:
@@ -622,14 +688,19 @@ class SessionStore:
                         new_d.resolved_at = old_d.resolved_at
                         break
 
-            # Identify discrepancies from previous revision that are now FIXED by supplier
+            # Identify discrepancies from previous revision:
             for old_d in old_audit.discrepancies:
                 is_still_triggered = any(
                     new_d.id == old_d.id or new_d.rule_id == old_d.rule_id
                     for new_d in new_audit.discrepancies
                 )
 
-                if not is_still_triggered:
+                if old_d.resolution_state in ("CLEARED_BY_REVISION", "CLEARED_IN_REVISION"):
+                    # ALREADY cleared in a prior revision: preserve in items without duplicate logging
+                    if not is_still_triggered:
+                        carried_forward_items.append(old_d.model_copy(deep=True))
+                elif not is_still_triggered and old_d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED"):
+                    # Truly NEWLY FIXED in THIS revision!
                     auto_resolved_ids.append(old_d.id)
                     fixed_item = old_d.model_copy(deep=True)
                     fixed_item.resolution_state = "CLEARED_BY_REVISION"
@@ -654,11 +725,10 @@ class SessionStore:
                     else:
                         fixed_item.resolution_note = f"Fixed in Rev v{new_revision}: Re-audited and reconciled in revised documents"
 
-                    auto_resolved_items.append(fixed_item)
-                elif old_d.resolution_state == "CLEARED_BY_REVISION":
-                    auto_resolved_items.append(old_d.model_copy(deep=True))
+                    newly_resolved_items.append(fixed_item)
 
-            new_audit.discrepancies.extend(auto_resolved_items)
+            all_fixed = newly_resolved_items + carried_forward_items
+            new_audit.discrepancies.extend(all_fixed)
 
             for it in new_audit.items:
                 for d in new_audit.discrepancies:
@@ -671,7 +741,7 @@ class SessionStore:
                         break
 
             item_ids = {it.id for it in new_audit.items}
-            for auto_item in auto_resolved_items:
+            for auto_item in all_fixed:
                 if auto_item.id not in item_ids:
                     new_audit.items.append(auto_item)
 
@@ -682,8 +752,8 @@ class SessionStore:
             new_audit.decision_trail = []
 
         now_sec = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        for fixed_item in auto_resolved_items:
-            new_audit.decision_trail.insert(0, {
+        for fixed_item in newly_resolved_items:
+            _append_decision_entry(new_audit.decision_trail, {
                 "id": f"DEC-{fixed_item.id}-v{new_revision}",
                 "discrepancy_id": fixed_item.id,
                 "title": fixed_item.title,
@@ -700,7 +770,7 @@ class SessionStore:
         # Explicit upload ledger entry in decision_trail
         doc_count = len([k for k in (new_files or {}).keys() if k in ("po", "inv", "pl") and (new_files or {})[k]])
         doc_count_str = f"{doc_count} revised document(s)" if doc_count > 0 else "revised document(s)"
-        new_audit.decision_trail.insert(0, {
+        _append_decision_entry(new_audit.decision_trail, {
             "id": f"DEC-UPLOAD-v{new_revision}",
             "discrepancy_id": "REVISION_UPLOAD",
             "title": f"Supplier Revised Packet Upload (Rev v{new_revision})",
@@ -713,6 +783,8 @@ class SessionStore:
             "actor_name": "Supplier Portal Upload (Zero-Login Magic Link)",
             "timestamp": now_sec,
         })
+
+        new_audit.decision_trail = _deduplicate_decision_trail(new_audit.decision_trail)
 
         new_audit.auto_resolved_in_latest_rev = auto_resolved_ids
 
@@ -826,7 +898,7 @@ class SessionStore:
             "actor_name": actor_name,
             "timestamp": timestamp,
         }
-        session.decision_trail.insert(0, log_entry)
+        _append_decision_entry(session.decision_trail, log_entry)
 
         # Recompute unresolved count and overall status
         unresolved = sum(
@@ -890,7 +962,7 @@ class SessionStore:
             session.updated_at = now_iso
             if not getattr(session, "decision_trail", None):
                 session.decision_trail = []
-            session.decision_trail.insert(0, {
+            _append_decision_entry(session.decision_trail, {
                 "id": f"DEC-REVOKE-{secrets.token_urlsafe(6)}",
                 "discrepancy_id": "MAGIC_LINK_REVOKED",
                 "title": "Supplier Magic Link Revoked",
@@ -929,7 +1001,7 @@ class SessionStore:
 
         if not getattr(session, "decision_trail", None):
             session.decision_trail = []
-        session.decision_trail.insert(0, {
+        _append_decision_entry(session.decision_trail, {
             "id": f"DEC-ROTATE-{secrets.token_urlsafe(6)}",
             "discrepancy_id": "MAGIC_LINK_ROTATED",
             "title": "Supplier Magic Link Rotated",
@@ -973,6 +1045,143 @@ class SessionStore:
         if not self._supabase:
             self._save_to_disk()
 
+        return session
+
+    # -------------------------------------------------------------------------
+    # 4c. Reopen Locked / Cleared Shipment Packet for Revision
+    # -------------------------------------------------------------------------
+    def reopen_shipment(
+        self,
+        token: str,
+        owner_id: Optional[str] = None,
+    ) -> AuditResponse:
+        """
+        Manually reopens a locked or cleared shipment packet for supplier revision.
+        - Extends link expiration by +7 days and unrevokes magic link.
+        - Resets resolved discrepancies to REVISION_REQUESTED so unresolved_count > 0.
+        - Updates overall status and logs a cryptographic chained decision trail entry.
+        """
+        session = self.get_session(token)
+        if not session:
+            raise KeyError(f"Session '{token}' not found")
+
+        actual_owner = self._owners.get(token)
+        if owner_id and actual_owner and actual_owner != owner_id:
+            raise PermissionError("Unauthorized to modify this shipment session")
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        session.link_revoked = False
+        session.link_expires_at = (now + timedelta(days=7)).isoformat()
+        session.reopened_for_revision = True
+        session.updated_at = now_iso
+
+        if not getattr(session, "decision_trail", None):
+            session.decision_trail = []
+
+        # Items previously marked as CLEARED_BY_REVISION / CLEARED_IN_REVISION or resolved
+        # (ACCEPTED_EXCEPTION, ESCALATED_TO_BROKER) remain strictly in their historical state.
+        # We do NOT reset them to REVISION_REQUESTED so resolved history is preserved cleanly.
+
+        unresolved = sum(
+            1 for d in session.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
+        )
+        session.summary.unresolved_count = unresolved
+        session.summary.status = "AWAITING_SUPPLIER_REVISION"
+
+        _append_decision_entry(session.decision_trail, {
+            "id": f"DEC-REOPEN-{secrets.token_urlsafe(6)}",
+            "discrepancy_id": "REOPEN_SHIPMENT",
+            "title": "Packet Reopened for Supplier Revision",
+            "previous_state": "CLEARED",
+            "new_state": "REOPENED_FOR_REVISION",
+            "action": "REOPEN_FOR_REVISION",
+            "reason_chip": "Buyer Action",
+            "note": "Packet manually reopened for supplier revision by Buyer.",
+            "actor_role": "BUYER_ADMIN",
+            "actor_name": "Compliance Admin",
+            "timestamp": now.strftime("%H:%M:%S"),
+        })
+
+        if self._supabase:
+            try:
+                self._supabase.table("shipments").update({
+                    "audit_payload": session.model_dump(mode="json"),
+                    "updated_at": now_iso,
+                }).eq("session_token", token).execute()
+            except Exception as exc:
+                logger.warning("Supabase update for reopen_shipment failed: %s", exc)
+
+        self._sessions[token] = session
+        if not self._supabase:
+            self._save_to_disk()
+        return session
+
+    # -------------------------------------------------------------------------
+    # 4d. Extend Magic Link Expiration
+    # -------------------------------------------------------------------------
+    def extend_link_expiry(
+        self,
+        token: str,
+        owner_id: Optional[str] = None,
+        days: int = 7,
+    ) -> AuditResponse:
+        """
+        Extends the supplier magic link expiration by +days (default 7).
+        Unrevokes link if revoked and logs chained decision trail entry.
+        """
+        session = self.get_session(token)
+        if not session:
+            raise KeyError(f"Session '{token}' not found")
+
+        actual_owner = self._owners.get(token)
+        if owner_id and actual_owner and actual_owner != owner_id:
+            raise PermissionError("Unauthorized to modify this shipment session")
+
+        now = datetime.now(timezone.utc)
+        base_time = now
+        if session.link_expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(session.link_expires_at.replace("Z", "+00:00"))
+                if exp_dt > now:
+                    base_time = exp_dt
+            except Exception:
+                base_time = now
+
+        new_expires_at = (base_time + timedelta(days=days)).isoformat()
+        session.link_expires_at = new_expires_at
+        session.link_revoked = False
+        session.updated_at = now.isoformat()
+
+        if not getattr(session, "decision_trail", None):
+            session.decision_trail = []
+
+        _append_decision_entry(session.decision_trail, {
+            "id": f"DEC-EXTEND-{secrets.token_urlsafe(6)}",
+            "discrepancy_id": "MAGIC_LINK_EXTENDED",
+            "title": f"Supplier Link Expiry Extended (+{days} Days)",
+            "previous_state": "ACTIVE",
+            "new_state": "ACTIVE",
+            "action": "EXTEND_EXPIRY",
+            "reason_chip": "Security Guardrail",
+            "note": f"Supplier link expiration extended by +{days} days.",
+            "actor_role": "BUYER_ADMIN",
+            "actor_name": "Compliance Admin",
+            "timestamp": now.strftime("%H:%M:%S"),
+        })
+
+        if self._supabase:
+            try:
+                self._supabase.table("shipments").update({
+                    "audit_payload": session.model_dump(mode="json"),
+                    "updated_at": session.updated_at,
+                }).eq("session_token", token).execute()
+            except Exception as exc:
+                logger.warning("Supabase update for extend_link_expiry failed: %s", exc)
+
+        self._sessions[token] = session
+        if not self._supabase:
+            self._save_to_disk()
         return session
 
     # -------------------------------------------------------------------------

@@ -90,6 +90,7 @@ class AuditResponse(BaseModel):
     decision_trail: List[Dict[str, Any]] = Field(default_factory=list)
     link_expires_at: Optional[str] = None
     link_revoked: bool = False
+    reopened_for_revision: bool = False
     extraction_confidence_pct: float = 99.4
     low_confidence_fields: List[str] = Field(default_factory=list)
 

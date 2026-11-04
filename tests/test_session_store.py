@@ -360,3 +360,60 @@ def test_claim_sandbox_workspace_migration_and_deduplication(dirty_packet_v1: Sh
     # Original user shipment remains intact
     assert session_store._owners.get(token_dirty) == user_id
 
+
+# ---------------------------------------------------------------------------
+# 7. Deduplication of Decision Trail on Reopen & Subsequent Re-audits
+# ---------------------------------------------------------------------------
+def test_reopen_and_subsequent_reaudit_does_not_duplicate_decision_trail(
+    dirty_packet_v1: ShipmentPacket,
+    corrected_packet_v2: ShipmentPacket,
+):
+    """
+    Verifies that reopening a cleared shipment and performing a subsequent re-audit
+    (e.g., Rev v3) does not duplicate historical clearance logs for items
+    already cleared in Rev v2.
+    """
+    owner = "sandbox_dedup_test"
+    v1_audit = run_deterministic_audit(dirty_packet_v1)
+    session = session_store.create_or_replace_session(v1_audit, owner_id=owner)
+    token = session.session_token
+
+    # 1. First re-audit: v1 -> v2 (clears items like DISC-CARTONS)
+    v2_audit = run_deterministic_audit(corrected_packet_v2)
+    s_v2 = session_store.update_session_reaudit(token=token, new_audit=v2_audit)
+    assert s_v2.revision_number == 2
+    assert "DISC-CARTONS" in s_v2.auto_resolved_in_latest_rev
+
+    carton_entries_v2 = [
+        t for t in s_v2.decision_trail if t.get("discrepancy_id") == "DISC-CARTONS"
+    ]
+    assert len(carton_entries_v2) == 1
+
+    # 2. Reopen for revision
+    s_v2.reopened_for_revision = True
+    session_store._sessions[token] = s_v2
+
+    # 3. Second re-audit: v2 -> v3
+    v3_audit = run_deterministic_audit(corrected_packet_v2)
+    s_v3 = session_store.update_session_reaudit(token=token, new_audit=v3_audit)
+    assert s_v3.revision_number == 3
+
+    # DISC-CARTONS was already cleared in v2; it must NOT be re-added as newly resolved in v3
+    assert "DISC-CARTONS" not in s_v3.auto_resolved_in_latest_rev
+
+    # In decision_trail, DISC-CARTONS must have exactly ONE clearance entry
+    carton_entries_v3 = [
+        t for t in s_v3.decision_trail if t.get("discrepancy_id") == "DISC-CARTONS"
+    ]
+    assert len(carton_entries_v3) == 1, (
+        f"Expected 1 clearance entry for DISC-CARTONS, got {len(carton_entries_v3)}"
+    )
+
+    # get_session returns deduplicated trail
+    fetched = session_store.get_session(token)
+    assert fetched is not None
+    carton_entries_fetched = [
+        t for t in fetched.decision_trail if t.get("discrepancy_id") == "DISC-CARTONS"
+    ]
+    assert len(carton_entries_fetched) == 1
+

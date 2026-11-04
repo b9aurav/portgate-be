@@ -28,6 +28,23 @@ from typing import List, Tuple
 from app.schemas.api import AuditResponse, DiscrepancyItem
 from app.schemas.domain import ShipmentPacket
 
+CBP_VAGUE_DESCRIPTIONS_VERSION = "2025-09-ACE"
+
+CBP_VAGUE_DESCRIPTIONS = frozenset({
+    "apparel",
+    "garments",
+    "textiles",
+    "cloth",
+    "clothing",
+    "parts",
+    "auto parts",
+    "samples",
+    "general cargo",
+    "merchandise",
+    "tiles",
+    "goods",
+})
+
 
 def _clean_digits(val: str | None) -> str:
     """Extract numeric digits from code for international root comparison."""
@@ -47,13 +64,101 @@ def _extract_incoterm_code(text: str | None) -> str | None:
 
 def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem], List[str]]:
     """
-    Executes the 9 deterministic compliance rules against the ShipmentPacket.
+    Executes the deterministic compliance rules against the ShipmentPacket.
     Returns (findings, passed_checks).
     """
     findings: List[DiscrepancyItem] = []
     inv = packet.commercial_invoice
     pl = packet.packing_list
     po = packet.buyer_po
+
+    # =========================================================================
+    # TIER 0: FAIL-CLOSED MANDATORY FIELD CHECKS (Header & Arithmetic Validation)
+    # =========================================================================
+
+    # Check 0a: Mandatory customs fields present and non-zero
+    missing_required = (
+        inv.total_cartons_declared <= 0
+        or pl.total_cartons <= 0
+        or inv.total_gross_weight_kg <= 0
+        or pl.total_gross_weight_kg <= 0
+        or inv.total_net_weight_kg <= 0
+        or pl.total_net_weight_kg <= 0
+        or len(inv.line_items) == 0
+        or (po is not None and len(po.line_items) == 0)
+    )
+    if missing_required:
+        desc_missing = (
+            "Mandatory customs declaration missing or zero. Commercial invoice and packing list "
+            "must declare positive total cartons, net weight, gross weight, and line items. "
+            "Packet fails closed to prevent customs seizure."
+        )
+        findings.append(
+            DiscrepancyItem(
+                id="DISC-MISSING-REQUIRED",
+                rule_id="RULE-D00-FAIL-CLOSED-MANDATORY",
+                category="DETERMINISTIC_CONFLICT",
+                severity="CRITICAL",
+                sev="crit",
+                title="Missing Mandatory Weight or Carton Declaration",
+                description=desc_missing,
+                body=desc_missing,
+                impact="Immediate customs entry filing failure; packet fails closed under 19 CFR regulations.",
+                fix="Supplier must declare positive total cartons, gross/net weights, and complete item lines.",
+                source_doc_a="Commercial Invoice",
+                source_field_a="total_cartons_declared / weights",
+                source_val_a=f"{inv.total_cartons_declared} CTNS, Net {inv.total_net_weight_kg:.1f}kg, Gross {inv.total_gross_weight_kg:.1f}kg",
+                source_doc_b="Packing List",
+                source_field_b="total_cartons / weights",
+                source_val_b=f"{pl.total_cartons} CTNS, Net {pl.total_net_weight_kg:.1f}kg, Gross {pl.total_gross_weight_kg:.1f}kg",
+                highlight_cells=["inv-ctns", "pl-ctns"],
+                cells=["inv-ctns", "pl-ctns"],
+                locs=[["inv", "Commercial Invoice"], ["pl", "Packing List"]],
+                recommended_actions=[
+                    "Ensure Commercial Invoice declares non-zero total cartons, net weight, and gross weight",
+                    "Ensure Packing List declares non-zero total cartons, net weight, and gross weight",
+                    "Ensure document line items are fully itemized",
+                ],
+            )
+        )
+
+    # Check 0b: Header vs. Line Sum Arithmetic
+    if len(inv.line_items) > 0:
+        inv_lines_sum = round(sum(l.total_usd for l in inv.line_items), 2)
+        if abs(inv_lines_sum - inv.total_invoice_value_usd) > 0.05:
+            diff_sum = abs(inv_lines_sum - inv.total_invoice_value_usd)
+            desc_sum = (
+                f"Commercial Invoice header declares ${inv.total_invoice_value_usd:,.2f}, "
+                f"but sum of line items equals ${inv_lines_sum:,.2f} (variance of ${diff_sum:,.2f}). "
+                "Extended line items must reconcile with header total."
+            )
+            findings.append(
+                DiscrepancyItem(
+                    id="DISC-INVOICE-TOTAL-SUM",
+                    rule_id="RULE-D06-HEADER-LINE-SUM-SYNC",
+                    category="DETERMINISTIC_CONFLICT",
+                    severity="CRITICAL",
+                    sev="crit",
+                    title="Commercial Invoice Header Total vs. Line Sum Mismatch",
+                    description=desc_sum,
+                    body=desc_sum,
+                    impact="CBP Form 7501 entry rejection for header total value mismatch vs. line item aggregate.",
+                    fix="Regenerate invoice in ERP to ensure line item totals sum exactly to invoice header total.",
+                    source_doc_a="Invoice Line Items Sum",
+                    source_field_a="sum(line_items.total_usd)",
+                    source_val_a=f"${inv_lines_sum:,.2f}",
+                    source_doc_b="Commercial Invoice Header",
+                    source_field_b="total_invoice_value_usd",
+                    source_val_b=f"${inv.total_invoice_value_usd:,.2f}",
+                    highlight_cells=["inv-total-amt"],
+                    cells=["inv-total-amt"],
+                    locs=[["inv", "Commercial Invoice"]],
+                    recommended_actions=[
+                        "Reconcile invoice header total with sum of extended line totals",
+                        "Regenerate Tally invoice with matching header amount",
+                    ],
+                )
+            )
 
     # =========================================================================
     # TIER 1: DETERMINISTIC CONFLICTS (Internal Math & Invoice <-> Packing List)
@@ -424,7 +529,7 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
                     )
                 )
 
-        # 8. RULE-V03-INCOTERM-VALUATION (CRITICAL)
+        # 8. RULE-V03-INCOTERM-VALUATION (WARNING / COMMERCIAL_VARIANCE)
         po_inco_raw = getattr(po, "incoterm", None) or getattr(po, "incoterms", None) or ""
         inv_inco_raw = getattr(inv, "incoterm", None) or getattr(inv, "incoterms", None) or ""
         po_inco_code = _extract_incoterm_code(po_inco_raw)
@@ -432,22 +537,22 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
 
         if po_inco_code and inv_inco_code and po_inco_code != inv_inco_code:
             desc_inco = (
-                f"Commercial Invoice declares delivery terms '{inv_inco_raw}' ({inv_inco_code}), "
-                f"which conflicts with Buyer PO delivery terms '{po_inco_raw}' ({po_inco_code}). "
-                "Under US Customs valuation statutes (19 U.S.C. §1401a), Incoterm discrepancy creates a dutiable value "
-                "risk regarding mandatory inclusion or deduction of ocean freight, insurance, and foreign inland charges."
+                f"Buyer PO specifies {po_inco_code} while Commercial Invoice declares {inv_inco_code}. "
+                "Under 19 USC 1401a, US Transaction Value excludes international freight and insurance "
+                "(CIF/CFR invoices require itemized freight/insurance deductions at entry). "
+                "Confirm whether Incoterm change was commercially authorized."
             )
             findings.append(
                 DiscrepancyItem(
                     id="DISC-INCOTERM",
                     rule_id="RULE-V03-INCOTERM-VALUATION",
-                    category="DETERMINISTIC_CONFLICT",
-                    severity="CRITICAL",
-                    sev="crit",
+                    category="COMMERCIAL_VARIANCE",
+                    severity="WARNING",
+                    sev="warn",
                     title="Incoterm Valuation Conflict (PO vs. Commercial Invoice)",
                     description=desc_inco,
                     body=desc_inco,
-                    impact="US CBP transaction valuation audit risk under 19 U.S.C. §1401a for incorrect freight/insurance declaration.",
+                    impact="US CBP transaction valuation audit risk under 19 USC 1401a for incorrect freight/insurance declaration.",
                     fix="Reconcile delivery terms: regenerate Commercial Invoice to match contract PO term, or execute an authorized PO Amendment.",
                     source_doc_a="Buyer PO",
                     source_field_a="incoterms",
@@ -500,28 +605,15 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
         )
 
     # 10. RULE-C03-CBP-VAGUE-CARGO-DESC (WARNING)
-    GENERIC_DESCRIPTIONS = {
-        "apparel",
-        "garments",
-        "textiles",
-        "cloth",
-        "clothing",
-        "parts",
-        "auto parts",
-        "samples",
-        "general cargo",
-        "merchandise",
-        "tiles",
-        "goods",
-    }
     for idx, inv_item in enumerate(inv.line_items):
         raw_desc = (inv_item.description or "").strip()
         cleaned_desc = raw_desc.lower()
-        if len(raw_desc) < 10 or cleaned_desc in GENERIC_DESCRIPTIONS:
+        if len(raw_desc) < 10 or cleaned_desc in CBP_VAGUE_DESCRIPTIONS:
             desc_vague = (
                 f"Commercial Invoice line #{inv_item.line_no} cargo description '{raw_desc}' is too generic. "
-                "Under US CBP Cargo Messaging and 19 CFR 4.7a rules, generic descriptions are rejected at ISF and entry filing. "
-                "CBP requires specific product identity, construction, and material composition for 10-digit HTSUS confirmation."
+                "Invoice description serves as the pre-shipment proxy for Bill of Lading / ACE Cargo Manifest screening. "
+                "Under CBP ACE Cargo Messaging rules (updated Sept 2025), generic commodity descriptions risk automated manifest rejection prior to vessel loading. "
+                "Specific product identity, construction, and material composition are required for 10-digit HTSUS confirmation."
             )
             findings.append(
                 DiscrepancyItem(
@@ -538,7 +630,7 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
                     source_doc_a="Commercial Invoice",
                     source_field_a=f"line_items[{idx}].description",
                     source_val_a=raw_desc,
-                    source_doc_b="CBP 19 CFR 4.7a Guidelines",
+                    source_doc_b=f"CBP ACE Cargo Manifest Rule ({CBP_VAGUE_DESCRIPTIONS_VERSION})",
                     source_field_b="acceptable_description_rule",
                     source_val_b="Requires specific product type + material",
                     highlight_cells=[f"inv-desc{inv_item.line_no}"],

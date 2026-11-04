@@ -127,14 +127,16 @@ DO CAPTURE THESE INTO `inv_lines`:
 # Multimodal PDF Ingestion
 # ---------------------------------------------------------------------------
 def extract_shipment_packet(
-    po_bytes: bytes,
-    inv_bytes: bytes,
-    pl_bytes: bytes,
+    po_bytes: Optional[bytes] = None,
+    inv_bytes: Optional[bytes] = None,
+    pl_bytes: Optional[bytes] = None,
     model: str | None = None,
+    locked_po: Optional[Any] = None,
 ) -> ExtractedShipmentPacket:
     """
-    Calls Google Gemini multimodal API with the 3 documents and enforces
+    Calls Google Gemini multimodal API with the documents and enforces
     structured JSON output validated against ExtractedShipmentPacket.
+    Supports either raw Buyer PO PDF bytes or an authoritative locked BuyerPO domain model.
     """
     from google.genai import errors, types  # type: ignore
 
@@ -149,33 +151,64 @@ def extract_shipment_packet(
     ]
     unique_models = list(dict.fromkeys(models_to_try))
 
-    def _pdf_to_parts(data: bytes) -> list[types.Part]:
+    def _pdf_to_parts(data: Optional[bytes]) -> list[types.Part]:
         """
         Supplies native application/pdf parts directly to Gemini multimodal ingestion.
         Native PDF tokenization is 5-10x faster and avoids high-resolution bitmap bloat.
         """
+        if not data:
+            return []
         try:
             return [types.Part.from_bytes(data=data, mime_type="application/pdf")]
-        except Exception:
-            return [types.Part.from_bytes(data=data, mime_type="application/pdf")]
+        except Exception as exc:
+            logger.warning("Failed to parse PDF bytes into Part: %s", exc)
+            return []
 
-    contents = [
-        types.Content(
-            role="user",
-            parts=[
-                types.Part.from_text(
-                    text="Please extract and semantically align the three attached documents "
-                    "per your instructions. Return the structured JSON output."
-                ),
-                types.Part.from_text(text="DOCUMENT 1 — US BUYER PURCHASE ORDER:"),
-                *_pdf_to_parts(po_bytes),
-                types.Part.from_text(text="DOCUMENT 2 — INDIAN EXPORTER TALLY INVOICE:"),
-                *_pdf_to_parts(inv_bytes),
-                types.Part.from_text(text="DOCUMENT 3 — EXPORTER PACKING LIST:"),
-                *_pdf_to_parts(pl_bytes),
-            ],
+    parts: list[types.Part] = [
+        types.Part.from_text(
+            text="Please extract and semantically align the attached documents "
+            "per your instructions. Return the structured JSON output."
         )
     ]
+
+    # Document 1: Buyer Purchase Order (PDF or locked structured contract)
+    if po_bytes and len(po_bytes) > 100:
+        parts.append(types.Part.from_text(text="DOCUMENT 1 — US BUYER PURCHASE ORDER (PDF):"))
+        parts.extend(_pdf_to_parts(po_bytes))
+    elif locked_po:
+        po_lines_txt = "\n".join(
+            f"- Line #{idx+1}: SKU={getattr(l, 'sku', '')}, Description={getattr(l, 'description', '')}, HTS Root={getattr(l, 'hts_root', '')}, Order Qty={getattr(l, 'order_qty', 0)} {getattr(l, 'uom', 'PCS')}, Unit Price=${getattr(l, 'unit_price', 0.0)}, Line Total=${getattr(l, 'line_total', 0.0)}"
+            for idx, l in enumerate(getattr(locked_po, "line_items", []))
+        )
+        po_summary = (
+            f"DOCUMENT 1 — AUTHORITATIVE US BUYER PURCHASE ORDER (CONTRACT ON FILE):\n"
+            f"PO Number: {getattr(locked_po, 'po_number', '')}\n"
+            f"Buyer: {getattr(locked_po, 'buyer_name', '')}\n"
+            f"Vendor: {getattr(locked_po, 'vendor_name', '')}\n"
+            f"Incoterm: {getattr(locked_po, 'incoterm', '')}\n"
+            f"Currency: {getattr(locked_po, 'currency', 'USD')}\n"
+            f"Total Amount: ${getattr(locked_po, 'total_amount', 0.0)}\n"
+            f"Line Items:\n{po_lines_txt}"
+        )
+        parts.append(types.Part.from_text(text=po_summary))
+    else:
+        parts.append(types.Part.from_text(text="DOCUMENT 1 — US BUYER PURCHASE ORDER: (Not Provided)"))
+
+    # Document 2: Commercial Invoice
+    if inv_bytes and len(inv_bytes) > 0:
+        parts.append(types.Part.from_text(text="DOCUMENT 2 — INDIAN EXPORTER TALLY INVOICE:"))
+        parts.extend(_pdf_to_parts(inv_bytes))
+    else:
+        parts.append(types.Part.from_text(text="DOCUMENT 2 — INDIAN EXPORTER TALLY INVOICE: (Not Provided)"))
+
+    # Document 3: Packing List
+    if pl_bytes and len(pl_bytes) > 0:
+        parts.append(types.Part.from_text(text="DOCUMENT 3 — EXPORTER PACKING LIST:"))
+        parts.extend(_pdf_to_parts(pl_bytes))
+    else:
+        parts.append(types.Part.from_text(text="DOCUMENT 3 — EXPORTER PACKING LIST: (Not Provided)"))
+
+    contents = [types.Content(role="user", parts=parts)]
 
     config_kwargs: dict[str, Any] = dict(
         system_instruction=_SYSTEM_PROMPT,

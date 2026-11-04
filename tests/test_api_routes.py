@@ -512,17 +512,17 @@ def test_rotate_magic_link_and_revocation_guardrails(client: TestClient, dirty_p
     assert res_revoke.status_code == 200
     assert res_revoke.json().get("link_revoked") is True
 
-    # 3. Attempt re-audit on revoked link -> 403 Forbidden
+    # 3. Attempt re-audit on revoked link -> uniform 404
     res_reaudit = client.post(
         f"/api/links/{new_token}/re-audit",
         data={"mock": "true"},
     )
-    assert res_reaudit.status_code == 403
-    assert "revoked by the buyer" in res_reaudit.json()["detail"]
+    assert res_reaudit.status_code == 404
+    assert "invalid, expired, or no longer active" in res_reaudit.json()["detail"]
 
 
-def test_reaudit_expired_link_returns_403(client: TestClient, dirty_packet_v1: ShipmentPacket):
-    """Attempting re-audit on an expired link returns 403 Forbidden."""
+def test_reaudit_expired_link_returns_uniform_404(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """Attempting re-audit on an expired link returns uniform 404."""
     owner = "sandbox_expired_test"
     audit = run_deterministic_audit(dirty_packet_v1)
     audit.link_expires_at = "2020-01-01T00:00:00Z"  # Past date
@@ -537,8 +537,8 @@ def test_reaudit_expired_link_returns_403(client: TestClient, dirty_packet_v1: S
         f"/api/links/{token}/re-audit",
         data={"mock": "true"},
     )
-    assert res_reaudit.status_code == 403
-    assert "expired" in res_reaudit.json()["detail"]
+    assert res_reaudit.status_code == 404
+    assert "invalid, expired, or no longer active" in res_reaudit.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -591,5 +591,253 @@ def test_get_session_shreeji_po_9921_canonical_fallback(client: TestClient):
     assert data["session_token"] == "shreeji-po-9921"
     assert data["shipment_ref"] == "SHP-2026-8841"
     assert data["summary"]["status"] == "ACTION_REQUIRED"
+
+
+# ---------------------------------------------------------------------------
+# 13. Industry Reviewer Security & Domain Accuracy Test Suite
+# ---------------------------------------------------------------------------
+def test_strict_pdf_upload_security_validation(client: TestClient):
+    """Rejects empty (0-byte), non-PDF, and PDFs containing embedded executable JavaScript."""
+    workspace = "sandbox_pdf_sec_test"
+    valid_pdf = _make_dummy_pdf("po.pdf")
+
+    # 1. Non-PDF file (e.g. HTML) -> 400 Bad Request
+    res_non_pdf = client.post(
+        "/api/audit",
+        files={
+            "po_pdf": valid_pdf,
+            "inv_pdf": ("inv.pdf", io.BytesIO(b"<html><body>fake content</body></html>"), "application/pdf"),
+            "pl_pdf": valid_pdf,
+        },
+        data={"mock": "true"},
+        headers={"X-Workspace-Id": workspace},
+    )
+    assert res_non_pdf.status_code == 400
+    assert "starting with '%pdf-'" in res_non_pdf.json()["detail"].lower()
+
+    # 2. Hostile PDF containing embedded /JavaScript -> 400 Bad Request
+    hostile_bytes = b"%PDF-1.4\n1 0 obj\n<< /Type /Action /S /JavaScript /JS (app.alert('malicious')) >>\nendobj\n%%EOF"
+    res_hostile = client.post(
+        "/api/audit",
+        files={
+            "po_pdf": valid_pdf,
+            "inv_pdf": ("inv.pdf", io.BytesIO(hostile_bytes), "application/pdf"),
+            "pl_pdf": valid_pdf,
+        },
+        data={"mock": "true"},
+        headers={"X-Workspace-Id": workspace},
+    )
+    assert res_hostile.status_code == 400
+    assert "javascript" in res_hostile.json()["detail"].lower()
+
+
+def test_uniform_404_across_invalid_expired_revoked_magic_links(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """Uniform 404 response across invalid, expired, and revoked magic links preventing information leakage."""
+    owner = "sandbox_uniform_404_test"
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token = stored.session_token
+
+    # 1. Invalid / Nonexistent token
+    res_invalid = client.get("/api/links/shp_totally_invalid_token")
+    assert res_invalid.status_code == 404
+    assert "invalid, expired, or no longer active" in res_invalid.json()["detail"]
+
+    # 2. Revoked token -> 404
+    session_store.rotate_magic_link(token=token, owner_id=owner, revoke=True)
+    res_revoked_get = client.get(f"/api/links/{token}")
+    assert res_revoked_get.status_code == 404
+    assert "invalid, expired, or no longer active" in res_revoked_get.json()["detail"]
+
+    res_revoked_post = client.post(f"/api/links/{token}/re-audit", data={"mock": "true"})
+    assert res_revoked_post.status_code == 404
+    assert "invalid, expired, or no longer active" in res_revoked_post.json()["detail"]
+
+    # 3. Expired token -> 404
+    audit_exp = run_deterministic_audit(dirty_packet_v1)
+    audit_exp.link_expires_at = "2020-01-01T00:00:00Z"
+    stored_exp = session_store.create_or_replace_session(
+        audit_exp,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token_exp = stored_exp.session_token
+    res_exp_get = client.get(f"/api/links/{token_exp}")
+    assert res_exp_get.status_code == 404
+    assert "invalid, expired, or no longer active" in res_exp_get.json()["detail"]
+
+
+def test_reopen_and_extend_expiry_endpoints(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """POST /api/shipments/{token}/reopen and POST /api/shipments/{token}/extend-expiry modify session state."""
+    owner = "sandbox_reopen_extend_test"
+    headers = {"X-Workspace-Id": owner}
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token = stored.session_token
+
+    # 1. Extend expiry (+7 days)
+    res_extend = client.post(f"/api/shipments/{token}/extend-expiry?days=7", headers=headers)
+    assert res_extend.status_code == 200
+    ext_data = res_extend.json()
+    assert ext_data["link_revoked"] is False
+    assert any(entry.get("action") == "EXTEND_EXPIRY" for entry in ext_data["decision_trail"])
+
+    # 2. Reopen shipment
+    res_reopen = client.post(f"/api/shipments/{token}/reopen", headers=headers)
+    assert res_reopen.status_code == 200
+    reopen_data = res_reopen.json()
+    assert reopen_data["link_revoked"] is False
+    assert reopen_data["reopened_for_revision"] is True
+    assert any(entry.get("action") == "REOPEN_FOR_REVISION" for entry in reopen_data["decision_trail"])
+
+
+def test_reopen_preserves_resolved_discrepancies_and_allows_reaudit(
+    client: TestClient, dirty_packet_v1: ShipmentPacket, clean_packet: ShipmentPacket
+):
+    """
+    Reopening a cleared shipment:
+    1. Sets reopened_for_revision = True
+    2. Keeps previously resolved items in their resolved state (NOT reset to REVISION_REQUESTED)
+    3. Keeps unresolved_count accurately reflecting only active items
+    4. Allows supplier revision re-audit even when prior unresolved_count was 0
+    """
+    owner = "sandbox_reopen_sync_test"
+    headers = {"X-Workspace-Id": owner}
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(audit, owner_id=owner)
+    token = stored.session_token
+
+    # Resolve all discrepancies so unresolved_count == 0 (CLEARED_WITH_EXCEPTIONS)
+    for d in stored.discrepancies:
+        client.patch(
+            f"/api/links/{token}/discrepancies/{d.id}",
+            json={"resolution_state": "ACCEPTED_EXCEPTION", "resolution_reason_chip": "Commercial Waiver"},
+            headers=headers,
+        )
+
+    cleared = session_store.get_session(token)
+    assert cleared.summary.unresolved_count == 0
+
+    # Reopen shipment
+    res_reopen = client.post(f"/api/shipments/{token}/reopen", headers=headers)
+    assert res_reopen.status_code == 200
+    reopened = res_reopen.json()
+
+    assert reopened["reopened_for_revision"] is True
+    assert reopened["summary"]["unresolved_count"] == 0
+    assert reopened["summary"]["status"] == "AWAITING_SUPPLIER_REVISION"
+
+    # Resolved items MUST remain in their historical state, NOT converted to active cards
+    for item in reopened["discrepancies"]:
+        assert item["resolution_state"] == "ACCEPTED_EXCEPTION"
+
+    # Now verify that re-audit succeeds because reopened_for_revision == True (not blocked by lock)
+    new_audit = run_deterministic_audit(clean_packet)
+    updated = session_store.update_session_reaudit(token=token, new_audit=new_audit)
+    assert updated.revision_number == stored.revision_number + 1
+    assert updated.reopened_for_revision is False
+
+
+def test_cryptographic_chained_hash_in_decision_trail(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """Decision log entries must form a tamper-evident cryptographic hash chain."""
+    owner = "sandbox_chained_hash_test"
+    headers = {"X-Workspace-Id": owner}
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token = stored.session_token
+
+    # Perform two consecutive state transitions
+    res_patch = client.patch(
+        f"/api/links/{token}/discrepancies/DISC-PRICE-2",
+        json={"resolution_state": "ACCEPTED_EXCEPTION", "resolution_reason_chip": "Approved PO Amendment"},
+        headers=headers,
+    )
+    assert res_patch.status_code == 200
+    res_reopen = client.post(f"/api/shipments/{token}/reopen", headers=headers)
+    assert res_reopen.status_code == 200
+
+    trail = res_reopen.json()["decision_trail"]
+    assert len(trail) >= 2
+
+    # Latest entry is at index 0, prior at index 1
+    latest = trail[0]
+    prior = trail[1]
+
+    assert "entry_hash" in latest and len(latest["entry_hash"]) == 16
+    assert "prev_entry_hash" in latest
+    assert "entry_hash" in prior and len(prior["entry_hash"]) == 16
+
+    # Verify link in chain: latest's prev_entry_hash matches prior's entry_hash
+    assert latest["prev_entry_hash"] == prior["entry_hash"]
+
+
+def test_reaudit_with_real_upload_invokes_extraction_and_does_not_default_to_mock(
+    client: TestClient,
+    dirty_packet_v1: ShipmentPacket,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    Verifies that uploading revised documents with mock=False does NOT default
+    to build_mock_revised_packet, but invokes real extraction.
+    Also verifies that if extraction returns non-matching or empty data,
+    the preseeded clean packet is NOT returned.
+    """
+    owner = "sandbox_real_upload_test"
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"", "mock": True},  # Notice: empty po_bytes and stored mock
+    )
+    token = stored.session_token
+
+    called_with = {}
+
+    def fake_extract(po_bytes=None, inv_bytes=None, pl_bytes=None, model=None, locked_po=None):
+        called_with["inv_bytes"] = inv_bytes
+        called_with["locked_po"] = locked_po
+        from app.schemas.extraction import ExtractedShipmentPacket, ExtractedMetadata
+        return ExtractedShipmentPacket(
+            metadata=ExtractedMetadata(
+                po_number="PO-RANDOM",
+                invoice_no="INV-RANDOM",
+                total_cartons=0,
+                total_cartons_declared=0,
+            ),
+            po_lines=[],
+            inv_lines=[],
+            pl_lines=[],
+        )
+
+    import app.api.routes as routes_module
+    monkeypatch.setattr(routes_module, "extract_shipment_packet", fake_extract)
+
+    real_inv_bytes = b"%PDF-1.4 real random invoice bytes"
+    res = client.post(
+        f"/api/links/{token}/re-audit",
+        files={"invoice_file": ("my_custom_invoice.pdf", io.BytesIO(real_inv_bytes), "application/pdf")},
+        data={"mock": "false"},
+    )
+    assert res.status_code == 200
+    assert called_with.get("inv_bytes") == real_inv_bytes
+    assert called_with.get("locked_po") is not None
+    data = res.json()
+    assert data["revision_number"] == 2
+    # Verify that it did NOT return the preseeded clean packet
+    disc_ids = [d["id"] for d in data["discrepancies"]]
+    assert "DISC-MISSING-REQUIRED" in disc_ids
+
 
 

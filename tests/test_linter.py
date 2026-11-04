@@ -363,6 +363,7 @@ def test_dirty_packet_v1_contains_all_discrepancy_classes(dirty_packet_v1: Shipm
     assert "RULE-D02-WEIGHT-PHYSICS" in rule_ids
     assert "RULE-D03-GROSS-WT-SYNC" in rule_ids
     assert "RULE-D05-LINE-TOTAL-ARITHMETIC" in rule_ids
+    assert "RULE-D06-HEADER-LINE-SUM-SYNC" in rule_ids
 
     # Commercial variances
     assert "RULE-V01-PO-PRICE-VARIANCE" in rule_ids
@@ -374,10 +375,10 @@ def test_dirty_packet_v1_contains_all_discrepancy_classes(dirty_packet_v1: Shipm
 
     audit = run_deterministic_audit(dirty_packet_v1)
     assert audit.summary.status == "ACTION_REQUIRED"
-    assert audit.summary.deterministic_conflicts == 4
+    assert audit.summary.deterministic_conflicts == 5
     assert audit.summary.commercial_variances == 2
     assert audit.summary.compliance_advisories == 2
-    assert audit.summary.unresolved_count == 8
+    assert audit.summary.unresolved_count == 9
 
 
 def test_corrected_packet_v2_has_only_one_commercial_variance(corrected_packet_v2: ShipmentPacket):
@@ -407,7 +408,7 @@ def test_2way_audit_mode_when_buyer_po_is_omitted(clean_packet: ShipmentPacket):
 # 7. Industry Reviewer Customs Compliance Checks (Incoterm & CBP Cargo Desc)
 # ---------------------------------------------------------------------------
 def test_incoterm_valuation_mismatch(clean_packet: ShipmentPacket):
-    """PO Incoterm ('FOB Mundra') vs Invoice Incoterm ('CIF Los Angeles') triggers DISC-INCOTERM."""
+    """PO Incoterm ('FOB Mundra') vs Invoice Incoterm ('CIF Los Angeles') triggers DISC-INCOTERM as a commercial variance."""
     packet = copy.deepcopy(clean_packet)
     packet.buyer_po.incoterm = "FOB Mundra"
     packet.commercial_invoice.incoterms = "CIF Los Angeles"
@@ -417,10 +418,11 @@ def test_incoterm_valuation_mismatch(clean_packet: ShipmentPacket):
 
     assert incoterm_disc is not None, "DISC-INCOTERM must be triggered when Incoterms conflict"
     assert incoterm_disc.rule_id == "RULE-V03-INCOTERM-VALUATION"
-    assert incoterm_disc.category == "DETERMINISTIC_CONFLICT"
-    assert incoterm_disc.severity == "CRITICAL"
+    assert incoterm_disc.category == "COMMERCIAL_VARIANCE"
+    assert incoterm_disc.severity == "WARNING"
     assert "FOB" in incoterm_disc.source_val_a
     assert "CIF" in incoterm_disc.source_val_b
+    assert "19 USC 1401a" in incoterm_disc.description
 
 
 def test_incoterm_matching_passes(clean_packet: ShipmentPacket):
@@ -436,7 +438,7 @@ def test_incoterm_matching_passes(clean_packet: ShipmentPacket):
 
 
 def test_vague_cargo_description_rejected(clean_packet: ShipmentPacket):
-    """Generic description ('apparel' or short description) triggers DISC-DESC-VAGUE-* under 19 CFR 4.7a."""
+    """Generic description ('apparel' or short description) triggers DISC-DESC-VAGUE-* as an ACE manifest proxy check."""
     packet = copy.deepcopy(clean_packet)
     packet.commercial_invoice.line_items[0].description = "apparel"
 
@@ -447,7 +449,48 @@ def test_vague_cargo_description_rejected(clean_packet: ShipmentPacket):
     assert vague_disc.rule_id == "RULE-C03-CBP-VAGUE-CARGO-DESC"
     assert vague_disc.category == "COMPLIANCE_ADVISORY"
     assert vague_disc.severity == "WARNING"
-    assert "19 CFR 4.7a" in vague_disc.description
+    assert "ACE Cargo Manifest" in vague_disc.description
+    assert "2025-09-ACE" in vague_disc.source_doc_b
+
+
+def test_fail_closed_mandatory_customs_fields(clean_packet: ShipmentPacket):
+    """Packets with missing/0 cartons, weights, or line items fail closed with DISC-MISSING-REQUIRED."""
+    # 1. Zero cartons on Commercial Invoice
+    pkt_cartons = copy.deepcopy(clean_packet)
+    pkt_cartons.commercial_invoice.total_cartons_declared = 0
+    f_cartons, _ = run_deterministic_lint(pkt_cartons)
+    assert any(f.id == "DISC-MISSING-REQUIRED" for f in f_cartons)
+    disc_c = next(f for f in f_cartons if f.id == "DISC-MISSING-REQUIRED")
+    assert disc_c.severity == "CRITICAL"
+    assert disc_c.category == "DETERMINISTIC_CONFLICT"
+
+    # 2. Zero gross weight on Packing List
+    pkt_wt = copy.deepcopy(clean_packet)
+    pkt_wt.packing_list.total_gross_weight_kg = 0.0
+    f_wt, _ = run_deterministic_lint(pkt_wt)
+    assert any(f.id == "DISC-MISSING-REQUIRED" for f in f_wt)
+
+    # 3. Empty line items
+    pkt_lines = copy.deepcopy(clean_packet)
+    pkt_lines.commercial_invoice.line_items = []
+    f_lines, _ = run_deterministic_lint(pkt_lines)
+    assert any(f.id == "DISC-MISSING-REQUIRED" for f in f_lines)
+
+
+def test_invoice_header_vs_line_sum_mismatch(clean_packet: ShipmentPacket):
+    """When sum of invoice line totals disagrees with header declared total, emit DISC-INVOICE-TOTAL-SUM."""
+    pkt = copy.deepcopy(clean_packet)
+    # Header declares $12,000 but line item is $10,000 (diff $2,000)
+    pkt.commercial_invoice.total_invoice_value_usd = 12000.00
+    findings, _ = run_deterministic_lint(pkt)
+    sum_disc = next((f for f in findings if f.id == "DISC-INVOICE-TOTAL-SUM"), None)
+
+    assert sum_disc is not None, "DISC-INVOICE-TOTAL-SUM must be emitted for header total mismatch"
+    assert sum_disc.rule_id == "RULE-D06-HEADER-LINE-SUM-SYNC"
+    assert sum_disc.category == "DETERMINISTIC_CONFLICT"
+    assert sum_disc.severity == "CRITICAL"
+    assert "12,000.00" in sum_disc.description
+    assert "10,000.00" in sum_disc.description
 
 
 def test_dynamic_extraction_confidence_scoring(clean_packet: ShipmentPacket):

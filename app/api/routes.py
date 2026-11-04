@@ -126,23 +126,50 @@ async def get_current_owner_id(
 
 
 # ---------------------------------------------------------------------------
-# Upload Helper
+# Upload Helper & Strict PDF Validation
 # ---------------------------------------------------------------------------
+def validate_pdf_upload(file_bytes: bytes, filename: str = "document.pdf") -> None:
+    """
+    Validates uploaded PDF bytes for integrity and security:
+    - 0-byte check (422 Unprocessable Entity)
+    - 15 MB limit (413 Payload Too Large)
+    - %PDF- magic bytes check (400 Bad Request)
+    - Embedded JavaScript execution vectors: /JavaScript or /JS (400 Bad Request)
+    """
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Uploaded file '{filename}' is empty (0 bytes).",
+        )
+    if len(file_bytes) > config.MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Uploaded file '{filename}' exceeds {config.MAX_FILE_BYTES // (1024 * 1024)} MB limit.",
+        )
+    if not file_bytes.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file format for '{filename}'. File must be a valid PDF starting with '%PDF-'.",
+        )
+    if (
+        b"/JavaScript" in file_bytes
+        or b"/JS " in file_bytes
+        or b"/JS\r" in file_bytes
+        or b"/JS\n" in file_bytes
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Security violation in '{filename}': Executable JavaScript (/JavaScript or /JS) in PDF is not permitted.",
+        )
+
+
 async def _read_upload(upload: UploadFile, label: str) -> bytes:
     if hasattr(upload, "file") and hasattr(upload.file, "read"):
         data = upload.file.read()
     else:
         data = await upload.read()
-    if len(data) > config.MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"{label} exceeds the {config.MAX_FILE_BYTES // (1024 * 1024)} MB limit.",
-        )
-    if not data:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{label} is empty.",
-        )
+    filename = getattr(upload, "filename", None) or label
+    validate_pdf_upload(data, filename)
     return data
 
 
@@ -193,6 +220,86 @@ def delete_shipment(token: str, owner_id: str = Depends(get_current_owner_id)):
             detail=f"Shipment session '{token}' not found",
         )
     return {"status": "success", "deleted_token": token}
+
+
+@router.get(
+    "/api/shipments/{token}",
+    response_model=AuditResponse,
+    summary="Fetch shipment audit session for Buyer Workbench (authenticated / workspace-scoped)",
+)
+def get_shipment(token: str, owner_id: str = Depends(get_current_owner_id)) -> AuditResponse:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    session = session_store.get_session(token)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment session '{token}' not found.",
+        )
+    return session
+
+
+@router.post(
+    "/api/shipments/{token}/reopen",
+    response_model=AuditResponse,
+    summary="Buyer reopens a cleared or locked shipment packet for supplier revision",
+)
+def reopen_shipment(
+    token: str,
+    owner_id: str = Depends(get_current_owner_id),
+) -> AuditResponse:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    try:
+        updated = session_store.reopen_shipment(token=token, owner_id=owner_id)
+        return updated
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment session '{token}' not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthorized to modify this shipment session.",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reopen shipment: {str(exc)}",
+        )
+
+
+@router.post(
+    "/api/shipments/{token}/extend-expiry",
+    response_model=AuditResponse,
+    summary="Buyer extends supplier magic link expiration by +7 days",
+)
+def extend_expiry(
+    token: str,
+    days: int = Query(7, ge=1, le=30),
+    owner_id: str = Depends(get_current_owner_id),
+) -> AuditResponse:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+    try:
+        updated = session_store.extend_link_expiry(token=token, owner_id=owner_id, days=days)
+        return updated
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment session '{token}' not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthorized to modify this shipment session.",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to extend link expiry: {str(exc)}",
+        )
 
 
 @router.post(
@@ -349,6 +456,37 @@ async def audit(
 # ---------------------------------------------------------------------------
 # 2. GET /api/links/{token} (Public, Zero-Auth Session Fetch)
 # ---------------------------------------------------------------------------
+def _check_supplier_magic_link_active(session: Optional[AuditResponse]) -> AuditResponse:
+    """
+    Uniform guardrail: when magic link is missing, expired, or revoked,
+    returns uniform 404 response to avoid information leakage.
+    """
+    detail_msg = "This supplier revision link is not found, invalid, expired, or no longer active."
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=detail_msg,
+        )
+    if getattr(session, "link_revoked", False):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=detail_msg,
+        )
+    if getattr(session, "link_expires_at", None):
+        try:
+            exp_dt = datetime.fromisoformat(session.link_expires_at.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > exp_dt:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=detail_msg,
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to parse link_expires_at: %s", exc)
+    return session
+
+
 @router.get(
     "/api/links/{token}",
     response_model=AuditResponse,
@@ -356,12 +494,7 @@ async def audit(
 )
 async def get_session(token: str) -> AuditResponse:
     session = session_store.get_session(token)
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Audit session '{token}' not found or expired.",
-        )
-    return session
+    return _check_supplier_magic_link_active(session)
 
 
 # ---------------------------------------------------------------------------
@@ -384,34 +517,10 @@ async def re_audit(
             detail="At least one revised file (Commercial Invoice or Packing List) must be provided.",
         )
 
-    existing_audit = session_store.get_session(token)
-    if not existing_audit:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Audit session '{token}' not found.",
-        )
+    raw_session = session_store.get_session(token)
+    existing_audit = _check_supplier_magic_link_active(raw_session)
 
-    # Magic Link Security Guardrail: Check revocation & expiration
-    if getattr(existing_audit, "link_revoked", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This supplier revision link has been revoked by the buyer.",
-        )
-
-    if getattr(existing_audit, "link_expires_at", None):
-        try:
-            exp_dt = datetime.fromisoformat(existing_audit.link_expires_at.replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) > exp_dt:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="This supplier revision link has expired. Please contact the buyer for a new link.",
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("Failed to parse link_expires_at: %s", exc)
-
-    # Guardrail: Lock packet when already cleared
+    # Guardrail: Lock packet when already cleared unless reopened for revision by buyer
     unresolved_count = (
         existing_audit.summary.unresolved_count
         if existing_audit.summary
@@ -420,7 +529,8 @@ async def re_audit(
             if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
         )
     )
-    if unresolved_count == 0:
+    is_reopened = getattr(existing_audit, "reopened_for_revision", False)
+    if unresolved_count == 0 and not is_reopened:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Shipment packet is already cleared and locked for customs filing.",
@@ -443,15 +553,13 @@ async def re_audit(
         else stored_files.get("pl", b"")
     )
 
-    # Detect if this is a sample/simulated revision or mock mode
+    # Detect if this is an explicit synthetic mock test run or simulation
     is_sample = (
         bool(mock)
-        or bool(stored_mock)
         or (invoice_file and getattr(invoice_file, "filename", "") in ("sample_revised.pdf", "dummy.pdf", "mock.pdf"))
         or (packing_list_file and getattr(packing_list_file, "filename", "") in ("sample_revised.pdf", "dummy.pdf", "mock.pdf"))
-        or (len(new_inv_bytes) < 300 and b"Catalog" in new_inv_bytes)
-        or (len(new_pl_bytes) < 300 and b"Catalog" in new_pl_bytes)
-        or len(po_bytes) < 100
+        or (invoice_file and len(new_inv_bytes) < 300 and b"Catalog" in new_inv_bytes)
+        or (packing_list_file and len(new_pl_bytes) < 300 and b"Catalog" in new_pl_bytes)
     )
 
     if is_sample:
@@ -460,7 +568,12 @@ async def re_audit(
     else:
         try:
             logger.info("Re-extracting revised packet with Gemini for token %s", token)
-            extracted = extract_shipment_packet(po_bytes, new_inv_bytes, new_pl_bytes)
+            extracted = extract_shipment_packet(
+                po_bytes=po_bytes if len(po_bytes) > 100 else None,
+                inv_bytes=new_inv_bytes if len(new_inv_bytes) > 0 else None,
+                pl_bytes=new_pl_bytes if len(new_pl_bytes) > 0 else None,
+                locked_po=existing_audit.packet.buyer_po,
+            )
             updated_packet = extracted_to_shipment_packet(
                 extracted,
                 tolerance_pct=tolerance_pct,
@@ -469,9 +582,16 @@ async def re_audit(
             # Guarantee locked buyer PO is strictly retained
             if existing_audit.packet.buyer_po:
                 updated_packet.buyer_po = existing_audit.packet.buyer_po
+            if not invoice_file and existing_audit.packet.commercial_invoice:
+                updated_packet.commercial_invoice = existing_audit.packet.commercial_invoice
+            if not packing_list_file and existing_audit.packet.packing_list:
+                updated_packet.packing_list = existing_audit.packet.packing_list
         except Exception as exc:
-            logger.exception("Re-extraction failed: falling back to structural update")
-            updated_packet = existing_audit.packet
+            logger.exception("Re-extraction with Gemini failed for token %s: %s", token, exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unable to extract customs data from revised documents: {str(exc)}",
+            ) from exc
 
     # Re-run deterministic audit against updated packet
     findings, passed_checks = run_deterministic_lint(updated_packet)
