@@ -64,6 +64,43 @@ class SessionStore:
                 return False
             for tok, s_dict in data.items():
                 self._sessions[tok] = AuditResponse.model_validate(s_dict)
+
+            # Backfill decision_trail for sessions with signed-off / resolved discrepancies
+            backfilled = False
+            for tok, session in self._sessions.items():
+                if not getattr(session, "decision_trail", None):
+                    trail = []
+                    for d in session.discrepancies:
+                        if d.resolution_state and d.resolution_state not in ("UNRESOLVED", "REVISION_REQUESTED"):
+                            act = (
+                                "ACCEPT_VARIANCE"
+                                if d.resolution_state == "ACCEPTED_EXCEPTION"
+                                else (
+                                    "ESCALATE_BROKER"
+                                    if d.resolution_state == "ESCALATED_TO_BROKER"
+                                    else ("CLEARED_BY_REVISION" if d.resolution_state == "CLEARED_BY_REVISION" else "REQUEST_REVISION")
+                                )
+                            )
+                            trail.append({
+                                "id": f"DEC-{d.id}",
+                                "discrepancy_id": d.id,
+                                "title": d.title,
+                                "previous_state": "UNRESOLVED",
+                                "new_state": d.resolution_state,
+                                "action": act,
+                                "reason_chip": d.resolution_reason_chip or ("Exception Accepted" if d.resolution_state == "ACCEPTED_EXCEPTION" else "Cleared"),
+                                "note": d.resolution_note,
+                                "actor_role": "SUPPLIER_PORTAL" if (d.resolved_by and "Supplier" in d.resolved_by) else "BUYER_WORKBENCH",
+                                "actor_name": d.resolved_by or "US Buyer Import Specialist",
+                                "timestamp": d.resolved_at or "00:00:00",
+                            })
+                    if trail:
+                        session.decision_trail = trail
+                        backfilled = True
+
+            if backfilled:
+                self._save_to_disk()
+
             logger.info("Loaded %d sessions from disk (%s)", len(self._sessions), self._persist_file)
             return len(self._sessions) > 0
         except Exception as exc:
@@ -235,6 +272,28 @@ class SessionStore:
                 if auto_item.id not in item_ids:
                     new_audit.items.append(auto_item)
 
+        # Preserve decision_trail and record auto-resolved supplier entries
+        if old_audit and getattr(old_audit, "decision_trail", None):
+            new_audit.decision_trail = list(old_audit.decision_trail)
+        else:
+            new_audit.decision_trail = []
+
+        now_sec = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        for fixed_item in auto_resolved_items:
+            new_audit.decision_trail.insert(0, {
+                "id": f"DEC-{fixed_item.id}-v{new_revision}",
+                "discrepancy_id": fixed_item.id,
+                "title": fixed_item.title,
+                "previous_state": "UNRESOLVED",
+                "new_state": "CLEARED_BY_REVISION",
+                "action": "CLEARED_BY_REVISION",
+                "reason_chip": fixed_item.resolution_reason_chip or f"Cleared by Supplier Upload (Rev v{new_revision})",
+                "note": fixed_item.resolution_note,
+                "actor_role": "SUPPLIER_PORTAL",
+                "actor_name": f"Supplier Upload (Rev v{new_revision})",
+                "timestamp": fixed_item.resolved_at or now_sec,
+            })
+
         new_audit.auto_resolved_in_latest_rev = auto_resolved_ids
 
         # Recompute summary with preserved resolutions
@@ -306,6 +365,38 @@ class SessionStore:
 
         if not found:
             raise ValueError(f"Discrepancy '{discrepancy_id}' not found in audit session.")
+
+        # Record decision into permanent audit trail
+        if not hasattr(session, "decision_trail") or session.decision_trail is None:
+            session.decision_trail = []
+
+        action_type = (
+            "ACCEPT_VARIANCE"
+            if patch_data.resolution_state == "ACCEPTED_EXCEPTION"
+            else (
+                "ESCALATE_BROKER"
+                if patch_data.resolution_state == "ESCALATED_TO_BROKER"
+                else "REQUEST_REVISION"
+            )
+        )
+        target_title = next(
+            (d.title for d in session.discrepancies if d.id == discrepancy_id),
+            discrepancy_id,
+        )
+        log_entry = {
+            "id": f"DEC-{int(datetime.now(timezone.utc).timestamp())}-{secrets.token_hex(2)}",
+            "discrepancy_id": discrepancy_id,
+            "title": target_title,
+            "previous_state": "UNRESOLVED",
+            "new_state": patch_data.resolution_state,
+            "action": action_type,
+            "reason_chip": patch_data.resolution_reason_chip or "",
+            "note": patch_data.resolution_note,
+            "actor_role": patch_data.actor_role,
+            "actor_name": actor_name,
+            "timestamp": timestamp,
+        }
+        session.decision_trail.insert(0, log_entry)
 
         # Recompute unresolved count and overall status
         unresolved = sum(

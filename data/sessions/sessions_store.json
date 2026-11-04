@@ -761,6 +761,73 @@
       "DISC-WEIGHT-INV",
       "DISC-HS-1",
       "DISC-PRICE-2"
+    ],
+    "decision_trail": [
+      {
+        "id": "DEC-DISC-QTY-2",
+        "discrepancy_id": "DISC-QTY-2",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "previous_state": "UNRESOLVED",
+        "new_state": "ACCEPTED_EXCEPTION",
+        "action": "ACCEPT_VARIANCE",
+        "reason_chip": "Agreed Seasonal Surcharge Pre-Approved",
+        "note": null,
+        "actor_role": "BUYER_WORKBENCH",
+        "actor_name": "US Buyer Import Specialist",
+        "timestamp": "03:18:20"
+      },
+      {
+        "id": "DEC-DISC-CARTONS",
+        "discrepancy_id": "DISC-CARTONS",
+        "title": "Carton Count Mismatch (Invoice vs. Packing List)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2 (110 CTNS = 110 CTNS)",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "03:17:52"
+      },
+      {
+        "id": "DEC-DISC-WEIGHT-INV",
+        "discrepancy_id": "DISC-WEIGHT-INV",
+        "title": "Line #3: Physical Weight Inversion (Net 520.0 kg > Gross 490.0 kg)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2: Tare & gross weights re-weighed (Net <= Gross verified)",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "03:17:52"
+      },
+      {
+        "id": "DEC-DISC-HS-1",
+        "discrepancy_id": "DISC-HS-1",
+        "title": "Line #1: 6-Digit HS Root Divergence (Invoice 620520 vs. PO 610910)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2: 6-digit HS root harmonized with Buyer PO schedule",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "03:17:52"
+      },
+      {
+        "id": "DEC-DISC-PRICE-2",
+        "discrepancy_id": "DISC-PRICE-2",
+        "title": "Line #2: Unit Price Variance vs. Buyer PO (+6.7%)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2: Unit rates and extended line arithmetic reconciled",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "03:17:52"
+      }
     ]
   },
   "Mp5JyACNrORlhQ": {
@@ -1144,7 +1211,22 @@
       "Port of loading INMUN1 matches shipping route"
     ],
     "updated_at": "2026-11-03T16:45:14.802970+00:00",
-    "auto_resolved_in_latest_rev": []
+    "auto_resolved_in_latest_rev": [],
+    "decision_trail": [
+      {
+        "id": "DEC-DISC-QTY-2",
+        "discrepancy_id": "DISC-QTY-2",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "previous_state": "UNRESOLVED",
+        "new_state": "ACCEPTED_EXCEPTION",
+        "action": "ACCEPT_VARIANCE",
+        "reason_chip": "Approved PO Amendment #2",
+        "note": null,
+        "actor_role": "BUYER_WORKBENCH",
+        "actor_name": "US Buyer Import Specialist",
+        "timestamp": "16:45:14"
+      }
+    ]
   },
   "NomUcXNyHVozcg": {
     "session_token": "NomUcXNyHVozcg",
@@ -2119,7 +2201,8 @@
       "Port of loading INMUN1 matches shipping route"
     ],
     "updated_at": "2026-11-03T16:50:21.143430+00:00",
-    "auto_resolved_in_latest_rev": []
+    "auto_resolved_in_latest_rev": [],
+    "decision_trail": []
   },
   "lvF-B4_PsnwAFQ": {
     "session_token": "lvF-B4_PsnwAFQ",
@@ -2883,6 +2966,73 @@
       "DISC-WEIGHT-INV",
       "DISC-HS-1",
       "DISC-PRICE-2"
+    ],
+    "decision_trail": [
+      {
+        "id": "DEC-DISC-QTY-2",
+        "discrepancy_id": "DISC-QTY-2",
+        "title": "Line #2: Quantity Variance (-59.0%) Exceeds \u00b15% PO Tolerance",
+        "previous_state": "UNRESOLVED",
+        "new_state": "ACCEPTED_EXCEPTION",
+        "action": "ACCEPT_VARIANCE",
+        "reason_chip": "Approved PO Amendment #2",
+        "note": null,
+        "actor_role": "BUYER_WORKBENCH",
+        "actor_name": "US Buyer Import Specialist",
+        "timestamp": "18:07:27"
+      },
+      {
+        "id": "DEC-DISC-CARTONS",
+        "discrepancy_id": "DISC-CARTONS",
+        "title": "Carton Count Mismatch (Invoice vs. Packing List)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2 (110 CTNS = 110 CTNS)",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "17:49:55"
+      },
+      {
+        "id": "DEC-DISC-WEIGHT-INV",
+        "discrepancy_id": "DISC-WEIGHT-INV",
+        "title": "Line #3: Physical Weight Inversion (Net 520.0 kg > Gross 490.0 kg)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2: Tare & gross weights re-weighed (Net <= Gross verified)",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "17:49:55"
+      },
+      {
+        "id": "DEC-DISC-HS-1",
+        "discrepancy_id": "DISC-HS-1",
+        "title": "Line #1: 6-Digit HS Root Divergence (Invoice 620520 vs. PO 610910)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2: 6-digit HS root harmonized with Buyer PO schedule",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "17:49:55"
+      },
+      {
+        "id": "DEC-DISC-PRICE-2",
+        "discrepancy_id": "DISC-PRICE-2",
+        "title": "Line #2: Unit Price Variance vs. Buyer PO (+6.7%)",
+        "previous_state": "UNRESOLVED",
+        "new_state": "CLEARED_BY_REVISION",
+        "action": "CLEARED_BY_REVISION",
+        "reason_chip": "Cleared by Supplier Upload (Rev v2)",
+        "note": "Fixed in Rev v2: Unit rates and extended line arithmetic reconciled",
+        "actor_role": "SUPPLIER_PORTAL",
+        "actor_name": "Supplier Upload (Rev v2)",
+        "timestamp": "17:49:55"
+      }
     ]
   }
 }

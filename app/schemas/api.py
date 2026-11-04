@@ -87,6 +87,7 @@ class AuditResponse(BaseModel):
     passed: List[str] = Field(default_factory=list)
     updated_at: Optional[str] = None
     auto_resolved_in_latest_rev: List[str] = Field(default_factory=list)
+    decision_trail: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ShipmentListItem(BaseModel):
