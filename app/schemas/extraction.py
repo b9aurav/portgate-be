@@ -74,6 +74,10 @@ class ExtractedMetadata(BaseModel):
     """Document-level header fields extracted from all three documents."""
 
     po_number: str = Field(default="PO-UNKNOWN", description="Buyer PO number, e.g. PO-PCR-45012")
+    buyer_po_ref: Optional[str] = Field(
+        default=None,
+        description="Buyer PO reference as explicitly declared on the Commercial Invoice header (e.g. PO-ATL-90210 or PO-PCR-45012).",
+    )
     invoice_no: str = Field(
         default="INV-UNKNOWN",
         description="Commercial invoice number, e.g. SHR/EXP/26-27/0412",

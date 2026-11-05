@@ -512,4 +512,52 @@ def test_dynamic_extraction_confidence_scoring(clean_packet: ShipmentPacket):
     assert "commercial_invoice.line_items[0].match_confidence" in audit_degraded.low_confidence_fields
 
 
+def test_po_reference_mismatch_guardrail(clean_packet: ShipmentPacket):
+    """Invoice referencing an alien PO number triggers critical DISC-PO-MISMATCH."""
+    packet = copy.deepcopy(clean_packet)
+    packet.commercial_invoice.buyer_po_number = "PO-AST-2026-889"
+    packet.commercial_invoice.buyer_po_ref = "PO-AST-2026-889"
+
+    findings, _ = run_deterministic_lint(packet)
+    po_mismatch = next((f for f in findings if f.id == "DISC-PO-MISMATCH"), None)
+
+    assert po_mismatch is not None
+    assert po_mismatch.category == "DETERMINISTIC_CONFLICT"
+    assert po_mismatch.severity == "CRITICAL"
+    assert "PO-AST-2026-889" in po_mismatch.description
+    assert clean_packet.buyer_po.po_number in po_mismatch.description
+
+
+def test_exporter_supplier_mismatch_guardrail(clean_packet: ShipmentPacket):
+    """Invoice from an alien exporter (e.g. Royal Vitrified Ceramics) triggers DISC-SUPPLIER-MISMATCH."""
+    packet = copy.deepcopy(clean_packet)
+    packet.buyer_po.supplier_name = "Shreeji Textiles & Apparel Pvt. Ltd."
+    packet.commercial_invoice.exporter_name = "Royal Vitrified Ceramics Pvt. Ltd."
+
+    findings, _ = run_deterministic_lint(packet)
+    supp_mismatch = next((f for f in findings if f.id == "DISC-SUPPLIER-MISMATCH"), None)
+
+    assert supp_mismatch is not None
+    assert supp_mismatch.category == "DETERMINISTIC_CONFLICT"
+    assert supp_mismatch.severity == "CRITICAL"
+    assert "Royal Vitrified Ceramics" in supp_mismatch.description
+    assert "Shreeji Textiles" in supp_mismatch.description
+
+
+def test_unexpected_invoice_line_mismatch(clean_packet: ShipmentPacket):
+    """Invoice line for completely unrelated commodity triggers DISC-UNEXPECTED-LINE."""
+    packet = copy.deepcopy(clean_packet)
+    packet.commercial_invoice.line_items[0].description = "POLISHED GLAZED CERAMIC TILES 600X1200MM"
+    packet.commercial_invoice.line_items[0].hsn_code = "6907.21.00"
+
+    findings, _ = run_deterministic_lint(packet)
+    line_mismatch = next((f for f in findings if f.id.startswith("DISC-UNEXPECTED-LINE")), None)
+
+    assert line_mismatch is not None
+    assert line_mismatch.severity == "CRITICAL"
+    assert line_mismatch.category == "DETERMINISTIC_CONFLICT"
+    assert "Unordered Item" in line_mismatch.title or "Uncontracted Cargo" in line_mismatch.title
+
+
+
 

@@ -12,9 +12,10 @@ Tests:
 from __future__ import annotations
 
 import copy
+import uuid
 import pytest
 
-from app.schemas.api import AuditResponse, PatchResolutionRequest
+from app.schemas.api import AuditResponse, AuditSummary, DiscrepancyItem, PatchResolutionRequest
 from app.schemas.domain import ShipmentPacket
 from app.services.linter import run_deterministic_audit
 from app.services.session_store import session_store
@@ -416,4 +417,52 @@ def test_reopen_and_subsequent_reaudit_does_not_duplicate_decision_trail(
         t for t in fetched.decision_trail if t.get("discrepancy_id") == "DISC-CARTONS"
     ]
     assert len(carton_entries_fetched) == 1
+
+
+def test_reaudit_with_mismatched_po_does_not_clear_prior_conflicts(dirty_packet_v1: ShipmentPacket):
+    """
+    Uploading a revised document with mismatched PO or Exporter identity must NEVER
+    mark prior discrepancies as CLEARED_BY_REVISION.
+    """
+    owner = "sandbox_mismatch_test"
+    v1_audit = run_deterministic_audit(dirty_packet_v1)
+    session = session_store.create_or_replace_session(v1_audit, owner_id=owner)
+    token = session.session_token
+
+    # In v2, an alien packet is uploaded referencing a different PO and Exporter
+    alien_packet = copy.deepcopy(dirty_packet_v1)
+    alien_packet.commercial_invoice.buyer_po_ref = "PO-AST-2026-889"
+    alien_packet.commercial_invoice.exporter_name = "Royal Vitrified Ceramics Pvt. Ltd."
+    alien_packet.commercial_invoice.line_items[0].description = "POLISHED CERAMIC TILES"
+    alien_packet.commercial_invoice.line_items[0].hsn_code = "6907.21.00"
+
+    v2_audit = run_deterministic_audit(alien_packet)
+    assert any(d.id in ("DISC-PO-MISMATCH", "DISC-SUPPLIER-MISMATCH") for d in v2_audit.discrepancies)
+
+    updated_v2 = session_store.update_session_reaudit(
+        token=token,
+        new_audit=v2_audit,
+        new_files={"inv": b"alien_inv_pdf", "pl": b"alien_pl_pdf"},
+    )
+
+    # 1. auto_resolved_in_latest_rev MUST be empty
+    assert updated_v2.auto_resolved_in_latest_rev == [], (
+        "Mismatched PO document upload must NOT auto-resolve any prior discrepancies"
+    )
+
+    # 2. Prior unresolved items from v1 must remain unresolved and carried forward
+    carton_item = next((d for d in updated_v2.discrepancies if d.id == "DISC-CARTONS"), None)
+    assert carton_item is not None
+    assert carton_item.resolution_state == "UNRESOLVED"
+
+    # 3. Decision trail contains explicit rejection log
+    rej_entry = next((e for e in updated_v2.decision_trail if e.get("discrepancy_id") == "UPLOAD_INVALID_DOC"), None)
+    assert rej_entry is not None
+    assert rej_entry.get("action") == "REJECTED_MISMATCH"
+    assert "Gatekeeper" in rej_entry.get("actor_name", "")
+
+    # 4. Status must be ACTION_REQUIRED
+    assert updated_v2.summary.status == "ACTION_REQUIRED"
+    assert updated_v2.summary.unresolved_count >= 3
+
 

@@ -177,17 +177,18 @@ def extract_shipment_packet(
         parts.extend(_pdf_to_parts(po_bytes))
     elif locked_po:
         po_lines_txt = "\n".join(
-            f"- Line #{idx+1}: SKU={getattr(l, 'sku', '')}, Description={getattr(l, 'description', '')}, HTS Root={getattr(l, 'hts_root', '')}, Order Qty={getattr(l, 'order_qty', 0)} {getattr(l, 'uom', 'PCS')}, Unit Price=${getattr(l, 'unit_price', 0.0)}, Line Total=${getattr(l, 'line_total', 0.0)}"
+            f"- Line #{idx+1}: SKU={getattr(l, 'sku', '')}, Description={getattr(l, 'description', '')}, HTS Code={getattr(l, 'hts_code', '')}, Order Qty={getattr(l, 'quantity', 0)} {getattr(l, 'uom', 'PCS')}, Unit Price=${getattr(l, 'unit_price_usd', 0.0)}, Line Total=${getattr(l, 'total_usd', 0.0)}"
             for idx, l in enumerate(getattr(locked_po, "line_items", []))
         )
+        po_supplier = getattr(locked_po, "supplier_name", None) or getattr(locked_po, "vendor_name", None) or "Shreeji Textiles & Apparel Pvt. Ltd."
         po_summary = (
             f"DOCUMENT 1 — AUTHORITATIVE US BUYER PURCHASE ORDER (CONTRACT ON FILE):\n"
             f"PO Number: {getattr(locked_po, 'po_number', '')}\n"
             f"Buyer: {getattr(locked_po, 'buyer_name', '')}\n"
-            f"Vendor: {getattr(locked_po, 'vendor_name', '')}\n"
-            f"Incoterm: {getattr(locked_po, 'incoterm', '')}\n"
+            f"Vendor: {po_supplier}\n"
+            f"Incoterm: {getattr(locked_po, 'incoterms', '') or getattr(locked_po, 'incoterm', '') or 'FOB Mundra'}\n"
             f"Currency: {getattr(locked_po, 'currency', 'USD')}\n"
-            f"Total Amount: ${getattr(locked_po, 'total_amount', 0.0)}\n"
+            f"Total Amount: ${getattr(locked_po, 'total_po_value_usd', 0.0)}\n"
             f"Line Items:\n{po_lines_txt}"
         )
         parts.append(types.Part.from_text(text=po_summary))
@@ -297,8 +298,11 @@ def extracted_to_shipment_packet(
     buyer_po = BuyerPO(
         po_number=meta.po_number or "PO-UNKNOWN",
         buyer_name=meta.importer_name or "Pacific Coast Retail Group LLC",
+        supplier_name=meta.exporter_name or "Shreeji Textiles & Apparel Pvt. Ltd.",
+        supplier_address=f"{meta.exporter_street or 'Plot 2301, GIDC Pandesara'}, {meta.exporter_city or 'Surat'}, {meta.exporter_state or 'Gujarat'}, {meta.exporter_postal or '394221'}, {meta.exporter_country_iso or 'IN'}",
         po_date=meta.invoice_date or "14-Oct-2026",
         incoterms=meta.po_incoterm or meta.incoterm or "FOB Mundra",
+        currency=getattr(meta, "po_currency", "USD") or getattr(meta, "currency", "USD") or "USD",
         quantity_tolerance_pct=tolerance_pct,
         line_items=po_line_items,
         total_po_value_usd=sum(p.total_usd for p in po_line_items),
@@ -338,6 +342,8 @@ def extracted_to_shipment_packet(
         else inv_lines_ctns_sum
     )
 
+    inv_po_ref = getattr(meta, "buyer_po_ref", None) or meta.po_number or "PO-UNKNOWN"
+
     commercial_invoice = CommercialInvoice(
         invoice_number=meta.invoice_no or "INV-UNKNOWN",
         invoice_date=meta.invoice_date or "14-Oct-2026",
@@ -345,7 +351,8 @@ def extracted_to_shipment_packet(
         exporter_gstin=meta.exporter_gstin or None,
         export_tax_route=tax_route,
         lut_arn_number=meta.exporter_lut_arn or None,
-        buyer_po_ref=meta.po_number or "PO-UNKNOWN",
+        buyer_po_ref=inv_po_ref,
+        buyer_po_number=inv_po_ref,
         total_cartons_declared=total_inv_cartons,
         total_net_weight_kg=sum(float(getattr(l, "net_wt_kg", 0.0) or 0.0) for l in (extracted.inv_lines or [])),
         total_gross_weight_kg=sum(float(getattr(l, "gross_wt_kg", 0.0) or 0.0) for l in (extracted.inv_lines or [])),
@@ -408,6 +415,7 @@ def build_mock_packet() -> ExtractedShipmentPacket:
     """
     metadata = ExtractedMetadata(
         po_number="PO-PCR-45012",
+        buyer_po_ref="PO-PCR-45012",
         invoice_no="SHR/EXP/26-27/0412",
         invoice_date="14-Oct-2026",
         packing_list_no="SHR/PL/0412",

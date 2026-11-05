@@ -658,16 +658,20 @@ class SessionStore:
         new_audit.reopened_for_revision = False
         new_audit.updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Preserve security & confidence metadata from previous revision
+        # Preserve security metadata from previous revision
         if old_audit:
             if getattr(old_audit, "link_expires_at", None):
                 new_audit.link_expires_at = old_audit.link_expires_at
             if getattr(old_audit, "link_revoked", None) is not None:
                 new_audit.link_revoked = old_audit.link_revoked
-            if getattr(old_audit, "extraction_confidence_pct", None) is not None:
-                new_audit.extraction_confidence_pct = old_audit.extraction_confidence_pct
-            if getattr(old_audit, "low_confidence_fields", None) is not None:
-                new_audit.low_confidence_fields = list(old_audit.low_confidence_fields)
+
+        # Identity guardrail: if the revised document references a different PO or supplier,
+        # it is an invalid document upload for this session. Do NOT auto-resolve prior conflicts.
+        has_identity_mismatch = any(
+            getattr(d, "id", "") in ("DISC-PO-MISMATCH", "DISC-SUPPLIER-MISMATCH")
+            or "WRONG SHIPMENT DOCUMENT" in (getattr(d, "title", "") or "").upper()
+            for d in new_audit.discrepancies
+        )
 
         auto_resolved_ids: list[str] = []
         newly_resolved_items: list[Any] = []
@@ -699,6 +703,12 @@ class SessionStore:
                     # ALREADY cleared in a prior revision: preserve in items without duplicate logging
                     if not is_still_triggered:
                         carried_forward_items.append(old_d.model_copy(deep=True))
+                elif has_identity_mismatch:
+                    # Uploaded an alien PO / supplier doc: Prior discrepancies cannot be cleared!
+                    # Carry them forward in their existing unresolved state so they stay visible.
+                    if not is_still_triggered:
+                        unresolved_old = old_d.model_copy(deep=True)
+                        carried_forward_items.append(unresolved_old)
                 elif not is_still_triggered and old_d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED"):
                     # Truly NEWLY FIXED in THIS revision!
                     auto_resolved_ids.append(old_d.id)
@@ -728,7 +738,11 @@ class SessionStore:
                     newly_resolved_items.append(fixed_item)
 
             all_fixed = newly_resolved_items + carried_forward_items
-            new_audit.discrepancies.extend(all_fixed)
+            existing_disc_ids = {d.id for d in new_audit.discrepancies}
+            for item in all_fixed:
+                if item.id not in existing_disc_ids:
+                    new_audit.discrepancies.append(item)
+                    existing_disc_ids.add(item.id)
 
             for it in new_audit.items:
                 for d in new_audit.discrepancies:
@@ -752,6 +766,22 @@ class SessionStore:
             new_audit.decision_trail = []
 
         now_sec = datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+        if has_identity_mismatch:
+            _append_decision_entry(new_audit.decision_trail, {
+                "id": f"DEC-INVALID-UPLOAD-v{new_revision}",
+                "discrepancy_id": "UPLOAD_INVALID_DOC",
+                "title": f"Mismatched Document Upload Flagged (Rev v{new_revision})",
+                "previous_state": "REVISION_REQUESTED",
+                "new_state": "REJECTED_MISMATCH",
+                "action": "REJECTED_MISMATCH",
+                "reason_chip": "Wrong Document Uploaded",
+                "note": "Uploaded Commercial Invoice references a different Purchase Order or Exporter than locked baseline. Conflict auto-clearance suspended.",
+                "actor_role": "GATEKEEPER",
+                "actor_name": "PortGate Pre-Entry Gatekeeper",
+                "timestamp": now_sec,
+            })
+
         for fixed_item in newly_resolved_items:
             _append_decision_entry(new_audit.decision_trail, {
                 "id": f"DEC-{fixed_item.id}-v{new_revision}",
@@ -775,10 +805,18 @@ class SessionStore:
             "discrepancy_id": "REVISION_UPLOAD",
             "title": f"Supplier Revised Packet Upload (Rev v{new_revision})",
             "previous_state": "REVISION_REQUESTED",
-            "new_state": "CLEARED_BY_REVISION",
-            "action": f"Uploaded Revision v{new_revision} — {len(auto_resolved_ids)} conflict(s) reconciled (SHA-256 verified)",
-            "reason_chip": "Supplier Portal Upload",
-            "note": f"Supplier uploaded {doc_count_str} via zero-login link. Verified SHA-256 signatures and automatically reconciled {len(auto_resolved_ids)} discrepancy item(s).",
+            "new_state": "ACTION_REQUIRED" if has_identity_mismatch else "CLEARED_BY_REVISION",
+            "action": (
+                f"Uploaded Revision v{new_revision} — Identity Mismatch Detected (0 conflicts reconciled)"
+                if has_identity_mismatch
+                else f"Uploaded Revision v{new_revision} — {len(auto_resolved_ids)} conflict(s) reconciled (SHA-256 verified)"
+            ),
+            "reason_chip": "Document Identity Mismatch" if has_identity_mismatch else "Supplier Portal Upload",
+            "note": (
+                f"Supplier uploaded {doc_count_str} via zero-login link. Document header mismatch with locked PO was detected; prior conflicts remain active."
+                if has_identity_mismatch
+                else f"Supplier uploaded {doc_count_str} via zero-login link. Verified SHA-256 signatures and automatically reconciled {len(auto_resolved_ids)} discrepancy item(s)."
+            ),
             "actor_role": "SUPPLIER_PORTAL",
             "actor_name": "Supplier Portal Upload (Zero-Login Magic Link)",
             "timestamp": now_sec,

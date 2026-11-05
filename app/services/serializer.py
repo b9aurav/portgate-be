@@ -151,6 +151,24 @@ def calculate_extraction_confidence(packet: ShipmentPacket) -> tuple[float, list
             low_confidence_fields.append("buyer_po.total_value")
             deductions += 1.0
 
+        # PO Reference mismatch penalty
+        inv_po = (inv.buyer_po_ref or inv.po_number or "").strip().upper()
+        locked_po = (po.po_number or "").strip().upper()
+        if inv_po and locked_po and inv_po != locked_po:
+            low_confidence_fields.append("commercial_invoice.buyer_po_ref (mismatched PO)")
+            deductions += 15.0
+
+        # Exporter / Supplier name mismatch penalty
+        inv_seller = (inv.exporter_name or "").strip()
+        po_seller = (getattr(po, "supplier_name", None) or getattr(po, "vendor_name", None) or "").strip()
+        if inv_seller and po_seller:
+            from app.services.linter import _clean_company_tokens
+            tokens_inv = set(_clean_company_tokens(inv_seller))
+            tokens_po = set(_clean_company_tokens(po_seller))
+            if tokens_inv and tokens_po and not (tokens_inv & tokens_po):
+                low_confidence_fields.append("commercial_invoice.exporter_name (mismatched supplier)")
+                deductions += 15.0
+
     # 4. Line Item Field Validity & Semantic Match Confidence
     if not inv.line_items:
         low_confidence_fields.append("commercial_invoice.line_items")
@@ -364,8 +382,14 @@ def build_audit_response(
         "pl": pl_cartons_list,
     }
 
+    inv_declared_po = inv.buyer_po_ref or getattr(inv, "buyer_po_number", None) or ""
+
     metadata_ui: Dict[str, Any] = {
         "po_number": po.po_number if po else (inv.buyer_po_ref or "PO-UNKNOWN"),
+        "buyer_po_ref": inv_declared_po,
+        "invoice_po_ref": inv_declared_po,
+        "po_supplier_name": (getattr(po, "supplier_name", None) or getattr(po, "vendor_name", None) or (inv.exporter_name if po is None else "")) if po else inv.exporter_name,
+        "po_supplier_address": (getattr(po, "supplier_address", None) or "") if po else "",
         "invoice_no": inv.invoice_number,
         "invoice_date": inv.invoice_date,
         "packing_list_no": pl.pl_number,

@@ -41,9 +41,13 @@ class POLineItem(BaseModel):
 class BuyerPO(BaseModel):
     po_number: str
     buyer_name: str
+    supplier_name: Optional[str] = "Shreeji Textiles & Apparel Pvt. Ltd."
+    vendor_name: Optional[str] = None
+    supplier_address: Optional[str] = "Plot 2301, GIDC Pandesara, Surat, Gujarat, 394221, IN"
     po_date: str
     incoterms: str = "FOB MUNDRA"
     incoterm: Optional[str] = None
+    currency: Optional[str] = "USD"
     quantity_tolerance_pct: float = 5.0
     line_items: List[POLineItem] = Field(default_factory=list)
     total_po_value_usd: float = 0.0
@@ -73,6 +77,7 @@ class CommercialInvoice(BaseModel):
     lut_arn_number: Optional[str] = None
     igst_amount_usd: Optional[float] = 0.0
     buyer_po_ref: Optional[str] = None
+    buyer_po_number: Optional[str] = None
     incoterms: Optional[str] = "FOB MUNDRA"
     incoterm: Optional[str] = None
     total_cartons_declared: int = 0

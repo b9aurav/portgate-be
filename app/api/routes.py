@@ -11,6 +11,7 @@ Routes:
 
 from __future__ import annotations
 
+import copy
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -581,7 +582,7 @@ async def re_audit(
             )
             # Guarantee locked buyer PO is strictly retained
             if existing_audit.packet.buyer_po:
-                updated_packet.buyer_po = existing_audit.packet.buyer_po
+                updated_packet.buyer_po = copy.deepcopy(existing_audit.packet.buyer_po)
             if not invoice_file and existing_audit.packet.commercial_invoice:
                 updated_packet.commercial_invoice = existing_audit.packet.commercial_invoice
             if not packing_list_file and existing_audit.packet.packing_list:

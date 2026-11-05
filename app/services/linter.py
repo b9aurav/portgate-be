@@ -62,6 +62,86 @@ def _extract_incoterm_code(text: str | None) -> str | None:
     return cleaned if len(cleaned) == 3 and cleaned.isalpha() else None
 
 
+_NOISE_WORDS: frozenset[str] = frozenset(
+    [
+        "PVT", "PRIVATE", "LTD", "LIMITED", "INC", "INCORPORATED", "LLC", "LLP",
+        "CORP", "CORPORATION", "CO", "COMPANY", "AND", "THE", "OF", "GROUP",
+        "INDUSTRIES", "INDUSTRY", "INTERNATIONAL", "INTL", "ENTERPRISES",
+        "ENTERPRISE", "EXPORTS", "EXPORT", "TRADING", "TRADE", "SOLUTIONS",
+        "SERVICES", "SERVICE",
+    ]
+)
+
+_PUNCT_RE = re.compile(r"[&.,\-/\\()\[\]{}'\"]")
+
+
+def _clean_company_tokens(company_name: str) -> list[str]:
+    cleaned = _PUNCT_RE.sub(" ", company_name.upper())
+    tokens = cleaned.split()
+    return [t for t in tokens if t not in _NOISE_WORDS and t.isalpha()]
+
+
+def _match_inv_line_to_po(inv_item: InvoiceLineItem, po_lines: List[POLineItem]) -> Optional[POLineItem]:
+    """
+    Semantically matches a Commercial Invoice line item to its corresponding
+    line on the locked Buyer PO using SKU, exact 6-digit HS root, line ref compatibility,
+    and product description commodity keywords.
+    """
+    inv_desc = (inv_item.description or "").lower()
+    inv_hsn_root = _clean_digits(inv_item.hsn_code)[:6]
+    inv_hsn_ch = inv_hsn_root[:2] if len(inv_hsn_root) >= 2 else ""
+
+    # 1. Exact or partial SKU match
+    for p in po_lines:
+        p_sku = (p.sku or "").lower().strip()
+        if p_sku and (p_sku in inv_desc or p_sku == getattr(inv_item, "sku", "").lower().strip()):
+            return p
+
+    # 2. 6-digit HS root exact match
+    for p in po_lines:
+        p_hts_root = _clean_digits(p.hts_code)[:6]
+        if inv_hsn_root and p_hts_root and inv_hsn_root == p_hts_root:
+            return p
+
+    # 3. Line ref match ONLY IF commodities are compatible
+    # (Textile chapters 50-63 are mutually compatible apparel chapters;
+    # but Chapter 69 Ceramics is strictly incompatible with Chapter 61 Apparel)
+    if inv_item.po_line_ref:
+        for p in po_lines:
+            if p.line_no == inv_item.po_line_ref:
+                p_hts_ch = _clean_digits(p.hts_code)[:2]
+                is_compatible = True
+                if inv_hsn_ch and p_hts_ch:
+                    if inv_hsn_ch != p_hts_ch:
+                        textile_chapters = {str(c).zfill(2) for c in range(50, 64)}
+                        if not (inv_hsn_ch in textile_chapters and p_hts_ch in textile_chapters):
+                            is_compatible = False
+                if is_compatible:
+                    return p
+
+    # 4. Keyword semantic overlap match (e.g. "t-shirt", "polo", "hoodie", "fleece")
+    inv_words = set(re.findall(r"[a-z]{4,}", inv_desc)) - {"with", "size", "inch", "pack", "white", "black", "item", "good", "goods"}
+    best_p = None
+    best_overlap = 0
+    for p in po_lines:
+        p_words = set(re.findall(r"[a-z]{4,}", (p.description or "").lower())) - {"with", "size", "inch", "pack", "white", "black", "item", "good", "goods"}
+        overlap = len(inv_words & p_words)
+        p_hts_ch = _clean_digits(p.hts_code)[:2]
+        is_compatible = True
+        if inv_hsn_ch and p_hts_ch and inv_hsn_ch != p_hts_ch:
+            textile_chapters = {str(c).zfill(2) for c in range(50, 64)}
+            if not (inv_hsn_ch in textile_chapters and p_hts_ch in textile_chapters):
+                is_compatible = False
+        if overlap > best_overlap and is_compatible:
+            best_overlap = overlap
+            best_p = p
+
+    if best_overlap >= 1:
+        return best_p
+
+    return None
+
+
 def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem], List[str]]:
     """
     Executes the deterministic compliance rules against the ShipmentPacket.
@@ -400,15 +480,124 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
             )
 
     # =========================================================================
-    # TIER 2: COMMERCIAL VARIANCES (Buyer PO vs. Commercial Invoice)
+    # TIER 2: COMMERCIAL VARIANCES & BASELINE CONTRACT VERIFICATION
     # =========================================================================
     if po is not None:
-        for idx, inv_item in enumerate(inv.line_items):
-            po_item = next(
-                (p for p in po.line_items if p.line_no == (inv_item.po_line_ref or inv_item.line_no)),
-                po.line_items[idx] if idx < len(po.line_items) else None,
+        # Check 2a: Strict PO Reference Match (DISC-PO-MISMATCH)
+        po_ref = (getattr(inv, "buyer_po_ref", None) or getattr(inv, "buyer_po_number", None) or getattr(inv, "po_number", None) or "").strip()
+        locked_po_no = (po.po_number or "").strip()
+        norm_inv_po = re.sub(r"[^A-Za-z0-9]", "", po_ref).upper()
+        norm_locked_po = re.sub(r"[^A-Za-z0-9]", "", locked_po_no).upper()
+        if po_ref and locked_po_no and norm_inv_po != norm_locked_po:
+            desc_po_mismatch = (
+                f"Commercial Invoice declares Buyer PO reference '{po_ref}', "
+                f"which does not match the authoritative locked Purchase Order '{locked_po_no}'. "
+                "Under 19 CFR § 141.86, customs entry documentation must accurately reference the governing commercial contract."
             )
+            findings.append(
+                DiscrepancyItem(
+                    id="DISC-PO-MISMATCH",
+                    rule_id="RULE-C01-PO-REFERENCE-MISMATCH",
+                    category="DETERMINISTIC_CONFLICT",
+                    severity="CRITICAL",
+                    sev="crit",
+                    title=f"Wrong Shipment Document: Invoice References PO '{po_ref}' Instead of Locked PO '{locked_po_no}'",
+                    description=desc_po_mismatch,
+                    body=desc_po_mismatch,
+                    impact="Immediate CBP entry rejection under 19 CFR § 141.86. Invoice is billed against an alien PO contract.",
+                    fix=f"Upload commercial invoice referencing locked Purchase Order '{locked_po_no}'.",
+                    source_doc_a="Buyer PO",
+                    source_field_a="po_number",
+                    source_val_a=locked_po_no,
+                    source_doc_b="Commercial Invoice",
+                    source_field_b="buyer_po_ref",
+                    source_val_b=po_ref,
+                    highlight_cells=["po-number", "inv-po-ref"],
+                    cells=["po-number", "inv-po-ref"],
+                    locs=[["po", "Buyer PO"], ["inv", "Commercial Invoice"]],
+                    recommended_actions=[
+                        f"Reject revised document: invoice references '{po_ref}' instead of '{locked_po_no}'",
+                        f"Request supplier submit invoice specifically issued for PO '{locked_po_no}'",
+                    ],
+                )
+            )
+
+        # Check 2b: Exporter / Supplier Identity Mismatch (DISC-SUPPLIER-MISMATCH)
+        po_supplier = getattr(po, "supplier_name", None) or getattr(po, "vendor_name", None) or ""
+        inv_exporter = inv.exporter_name or ""
+        if po_supplier and inv_exporter:
+            po_tokens = set(_clean_company_tokens(po_supplier))
+            inv_tokens = set(_clean_company_tokens(inv_exporter))
+            if po_tokens and inv_tokens and not (po_tokens & inv_tokens):
+                desc_sup_mismatch = (
+                    f"Commercial Invoice is issued by '{inv_exporter}', "
+                    f"which does not match the authorized contracting vendor '{po_supplier}' on the locked Buyer PO. "
+                    "Customs valuation and CBP Manufacturer Identification (MID) require the invoice exporter to match the authorized supplier."
+                )
+                findings.append(
+                    DiscrepancyItem(
+                        id="DISC-SUPPLIER-MISMATCH",
+                        rule_id="RULE-C02-SUPPLIER-IDENTITY-MISMATCH",
+                        category="DETERMINISTIC_CONFLICT",
+                        severity="CRITICAL",
+                        sev="crit",
+                        title="Exporter Identity Mismatch Against Locked Buyer PO",
+                        description=desc_sup_mismatch,
+                        body=desc_sup_mismatch,
+                        impact="Severe CBP MID and corporate identity mismatch. Cargo manifests cannot clear under an alien corporate identity.",
+                        fix=f"Ensure Commercial Invoice is issued by contracted supplier '{po_supplier}'.",
+                        source_doc_a="Buyer PO",
+                        source_field_a="supplier_name",
+                        source_val_a=po_supplier,
+                        source_doc_b="Commercial Invoice",
+                        source_field_b="exporter_name",
+                        source_val_b=inv_exporter,
+                        highlight_cells=["po-seller", "inv-exporter"],
+                        cells=["po-seller", "inv-exporter"],
+                        locs=[["po", "Buyer PO"], ["inv", "Commercial Invoice"]],
+                        recommended_actions=[
+                            f"Confirm whether '{inv_exporter}' is an authorized sister factory or sub-contractor",
+                            f"If unauthorized, reject document and demand invoice from contracted vendor '{po_supplier}'",
+                        ],
+                    )
+                )
+
+        # Check 2c: Line-level PO matching
+        for idx, inv_item in enumerate(inv.line_items):
+            po_item = _match_inv_line_to_po(inv_item, po.line_items)
             if not po_item:
+                desc_unexp = (
+                    f"Commercial Invoice line #{inv_item.line_no} ('{inv_item.description}', HSN {inv_item.hsn_code}) "
+                    f"cannot be matched to any authorized line item on locked Buyer PO '{po.po_number}'. "
+                    "All billed items on Commercial Invoice must correspond to items authorized on the governing commercial contract."
+                )
+                findings.append(
+                    DiscrepancyItem(
+                        id=f"DISC-UNEXPECTED-LINE-{inv_item.line_no}",
+                        rule_id="RULE-C00-UNORDERED-ITEM",
+                        category="DETERMINISTIC_CONFLICT",
+                        severity="CRITICAL",
+                        sev="crit",
+                        title=f"Line #{inv_item.line_no}: Unordered Item Not Present on Locked Buyer PO",
+                        description=desc_unexp,
+                        body=desc_unexp,
+                        impact="Immediate CBP Form 7501 entry hold; uncontracted commodity subject to border inspection.",
+                        fix=f"Remove unordered commodity '{inv_item.description[:30]}' from invoice or issue Buyer PO amendment.",
+                        source_doc_a="Buyer PO",
+                        source_field_a="line_items",
+                        source_val_a="Not present on PO",
+                        source_doc_b="Commercial Invoice",
+                        source_field_b=f"line_items[{idx}].description",
+                        source_val_b=f"{inv_item.description} ({inv_item.quantity:g} {inv_item.uom})",
+                        highlight_cells=[f"inv-desc{inv_item.line_no}"],
+                        cells=[f"inv-desc{inv_item.line_no}"],
+                        locs=[["inv", "Commercial Invoice"], ["po", "Buyer PO"]],
+                        recommended_actions=[
+                            "Verify if item was shipped by mistake",
+                            "Request revised Commercial Invoice omitting uncontracted item",
+                        ],
+                    )
+                )
                 continue
 
             # 6. RULE-V01-PO-PRICE-VARIANCE (CRITICAL)
