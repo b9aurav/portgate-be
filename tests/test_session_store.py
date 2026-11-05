@@ -466,3 +466,71 @@ def test_reaudit_with_mismatched_po_does_not_clear_prior_conflicts(dirty_packet_
     assert updated_v2.summary.unresolved_count >= 3
 
 
+def test_idempotent_reopen_revoke_and_clamped_expiry(dirty_packet_v1: ShipmentPacket):
+    """
+    BUG-02 & BUG-03 Regression Test:
+    1. Reopen shipment twice in a row -> only 1 REOPEN_FOR_REVISION entry in decision_trail.
+    2. Revoke magic link twice in a row -> only 1 REVOKED entry in decision_trail.
+    3. Extend expiry 3 times in a row -> only 1 EXTEND_EXPIRY entry in decision_trail,
+       and link_expires_at is clamped to <= 14 days from now.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    owner = "sandbox_idempotency_unit_test"
+    audit = run_deterministic_audit(dirty_packet_v1)
+    session = session_store.create_or_replace_session(audit, owner_id=owner)
+    token = session.session_token
+
+    # 1. Test Extend Expiry: first call extends, second and third calls are no-ops
+    ext1 = session_store.extend_link_expiry(token, days=7)
+    assert ext1 is not None
+    extend_entries = [e for e in ext1.decision_trail if e.get("action") == "EXTEND_EXPIRY"]
+    assert len(extend_entries) == 1
+
+    # Verify link_expires_at is clamped to <= 14 days from now
+    now_dt = datetime.now(timezone.utc)
+    exp1_dt = datetime.fromisoformat(ext1.link_expires_at.replace("Z", "+00:00"))
+    assert exp1_dt <= now_dt + timedelta(days=14, minutes=5)
+
+    # Calling extend_link_expiry 2 more times must NOT append duplicate entries
+    ext2 = session_store.extend_link_expiry(token, days=7)
+    assert ext2 is not None
+    ext3 = session_store.extend_link_expiry(token, days=7)
+    assert ext3 is not None
+    extend_entries_after = [e for e in ext3.decision_trail if e.get("action") == "EXTEND_EXPIRY"]
+    assert len(extend_entries_after) == 1, (
+        f"Expected 1 EXTEND_EXPIRY entry after repeated calls, got {len(extend_entries_after)}"
+    )
+
+    # 2. Test Reopen Shipment Idempotency
+    reopen1 = session_store.reopen_shipment(token)
+    assert reopen1 is not None
+    assert reopen1.reopened_for_revision is True
+    reopen_entries = [e for e in reopen1.decision_trail if e.get("action") == "REOPEN_FOR_REVISION"]
+    assert len(reopen_entries) == 1
+
+    reopen2 = session_store.reopen_shipment(token)
+    assert reopen2 is not None
+    assert reopen2.reopened_for_revision is True
+    reopen_entries_after = [e for e in reopen2.decision_trail if e.get("action") == "REOPEN_FOR_REVISION"]
+    assert len(reopen_entries_after) == 1, (
+        f"Expected 1 REOPEN_FOR_REVISION entry after repeated reopen calls, got {len(reopen_entries_after)}"
+    )
+
+    # 3. Test Revoke Idempotency
+    rev1 = session_store.rotate_magic_link(token, revoke=True)
+    assert rev1 is not None
+    assert rev1.link_revoked is True
+    revoke_entries = [e for e in rev1.decision_trail if e.get("action") == "REVOKED"]
+    assert len(revoke_entries) == 1
+
+    rev2 = session_store.rotate_magic_link(token, revoke=True)
+    assert rev2 is not None
+    assert rev2.link_revoked is True
+    revoke_entries_after = [e for e in rev2.decision_trail if e.get("action") == "REVOKED"]
+    assert len(revoke_entries_after) == 1, (
+        f"Expected 1 REVOKED entry after repeated revoke calls, got {len(revoke_entries_after)}"
+    )
+
+
+

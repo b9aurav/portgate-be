@@ -31,6 +31,7 @@ def _deduplicate_decision_trail(trail: List[Dict[str, Any]]) -> List[Dict[str, A
     """
     Ensures each discrepancy clearance is recorded only once per actual resolution event,
     preventing duplicate entries across subsequent revision re-audits.
+    Collapses consecutive identical administrative actions (REOPEN, REVOKE, EXTEND_EXPIRY).
     Preserves the earliest/original resolution event when deduplicating.
     """
     if not trail:
@@ -38,6 +39,8 @@ def _deduplicate_decision_trail(trail: List[Dict[str, Any]]) -> List[Dict[str, A
     seen_ids = set()
     seen_disc_cleared = set()
     cleaned_rev = []
+    last_admin_action: Optional[str] = None
+
     # Process from oldest to newest (trail has newest first at index 0)
     for entry in reversed(trail):
         entry_id = entry.get("id")
@@ -48,11 +51,28 @@ def _deduplicate_decision_trail(trail: List[Dict[str, Any]]) -> List[Dict[str, A
 
         disc_id = entry.get("discrepancy_id")
         action = entry.get("action")
+
         # Deduplicate redundant clearance entries for the same discrepancy
         if disc_id and (action == "CLEARED_BY_REVISION" or action == "CLEARED_IN_REVISION"):
             if disc_id in seen_disc_cleared:
                 continue
             seen_disc_cleared.add(disc_id)
+
+        # Normalize and collapse consecutive identical administrative actions
+        norm_action = None
+        if action in ("REOPEN_FOR_REVISION", "REOPEN") or disc_id == "REOPEN_SHIPMENT":
+            norm_action = "REOPEN"
+        elif action in ("REVOKED", "REVOKE") or disc_id == "MAGIC_LINK_REVOKED":
+            norm_action = "REVOKE"
+        elif action in ("EXTEND_EXPIRY", "EXTEND") or disc_id == "MAGIC_LINK_EXTENDED":
+            norm_action = "EXTEND_EXPIRY"
+
+        if norm_action:
+            if norm_action == last_admin_action:
+                continue
+            last_admin_action = norm_action
+        else:
+            last_admin_action = None
 
         cleaned_rev.append(entry)
 
@@ -996,6 +1016,10 @@ class SessionStore:
         now_iso = now.isoformat()
 
         if revoke:
+            if getattr(session, "link_revoked", False):
+                logger.info("rotate_magic_link (revoke) idempotent no-op for %s: link is already revoked", token)
+                return session
+
             session.link_revoked = True
             session.updated_at = now_iso
             if not getattr(session, "decision_trail", None):
@@ -1013,6 +1037,8 @@ class SessionStore:
                 "actor_name": "Compliance Admin",
                 "timestamp": now.strftime("%H:%M:%S"),
             })
+
+            session.decision_trail = _deduplicate_decision_trail(session.decision_trail)
 
             if self._supabase:
                 try:
@@ -1107,6 +1133,17 @@ class SessionStore:
         if owner_id and actual_owner and actual_owner != owner_id:
             raise PermissionError("Unauthorized to modify this shipment session")
 
+        # Idempotency check: if session is already reopened or the most recent admin entry is already a REOPEN
+        trail = getattr(session, "decision_trail", []) or []
+        is_already_reopened = getattr(session, "reopened_for_revision", False)
+        most_recent_action = trail[0].get("action") if trail else None
+        most_recent_disc_id = trail[0].get("discrepancy_id") if trail else None
+        is_recent_reopen = most_recent_action in ("REOPEN_FOR_REVISION", "REOPEN") or most_recent_disc_id == "REOPEN_SHIPMENT"
+
+        if is_already_reopened or is_recent_reopen:
+            logger.info("reopen_shipment idempotent no-op for %s: already reopened", token)
+            return session
+
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         session.link_revoked = False
@@ -1141,6 +1178,8 @@ class SessionStore:
             "timestamp": now.strftime("%H:%M:%S"),
         })
 
+        session.decision_trail = _deduplicate_decision_trail(session.decision_trail)
+
         if self._supabase:
             try:
                 self._supabase.table("shipments").update({
@@ -1166,7 +1205,9 @@ class SessionStore:
     ) -> AuditResponse:
         """
         Extends the supplier magic link expiration by +days (default 7).
-        Unrevokes link if revoked and logs chained decision trail entry.
+        Clamps the maximum allowed expiration window to now + 14 days max.
+        Idempotent: if current expiration is already within 1 hour of the target/clamped
+        timestamp, does not advance further and does not append duplicate logs.
         """
         session = self.get_session(token)
         if not session:
@@ -1177,6 +1218,7 @@ class SessionStore:
             raise PermissionError("Unauthorized to modify this shipment session")
 
         now = datetime.now(timezone.utc)
+        max_allowed_dt = now + timedelta(days=14)
         base_time = now
         if session.link_expires_at:
             try:
@@ -1186,7 +1228,24 @@ class SessionStore:
             except Exception:
                 base_time = now
 
-        new_expires_at = (base_time + timedelta(days=days)).isoformat()
+        target_dt = min(base_time + timedelta(days=days), max_allowed_dt)
+
+        if session.link_expires_at:
+            try:
+                current_exp = datetime.fromisoformat(session.link_expires_at.replace("Z", "+00:00"))
+                # If current_exp is already within 1 hour of target_dt, or already clamped at max allowed:
+                if abs((current_exp - target_dt).total_seconds()) < 3600 or (current_exp >= max_allowed_dt - timedelta(hours=1)):
+                    logger.info(
+                        "extend_link_expiry idempotent no-op for %s: current_exp %s is already at max allowed target %s",
+                        token,
+                        current_exp.isoformat(),
+                        target_dt.isoformat(),
+                    )
+                    return session
+            except Exception as exc:
+                logger.warning("Failed to parse link_expires_at: %s", exc)
+
+        new_expires_at = target_dt.isoformat()
         session.link_expires_at = new_expires_at
         session.link_revoked = False
         session.updated_at = now.isoformat()
@@ -1202,11 +1261,13 @@ class SessionStore:
             "new_state": "ACTIVE",
             "action": "EXTEND_EXPIRY",
             "reason_chip": "Security Guardrail",
-            "note": f"Supplier link expiration extended by +{days} days.",
+            "note": f"Supplier link expiration extended by +{days} days (Clamped to {new_expires_at[:10]}).",
             "actor_role": "BUYER_ADMIN",
             "actor_name": "Compliance Admin",
             "timestamp": now.strftime("%H:%M:%S"),
         })
+
+        session.decision_trail = _deduplicate_decision_trail(session.decision_trail)
 
         if self._supabase:
             try:

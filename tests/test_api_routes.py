@@ -840,4 +840,56 @@ def test_reaudit_with_real_upload_invokes_extraction_and_does_not_default_to_moc
     assert "DISC-MISSING-REQUIRED" in disc_ids
 
 
+def test_idempotent_reopen_revoke_and_clamped_expiry_endpoints(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """
+    BUG-02 & BUG-03 Regression Test via HTTP Endpoints:
+    1. POST /api/shipments/{token}/extend-expiry?days=7 three times -> only 1 EXTEND_EXPIRY entry, clamped to <= 14d.
+    2. POST /api/shipments/{token}/reopen twice -> only 1 REOPEN_FOR_REVISION entry.
+    3. POST /api/shipments/{token}/rotate-link?revoke=true twice -> only 1 REVOKED entry.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    owner = "sandbox_api_idempotency_test"
+    headers = {"X-Workspace-Id": owner}
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(
+        audit,
+        owner_id=owner,
+        files={"po": b"mock_po", "inv": b"mock_inv", "pl": b"mock_pl", "mock": True},
+    )
+    token = stored.session_token
+
+    # 1. Extend expiry 3 times
+    for _ in range(3):
+        res = client.post(f"/api/shipments/{token}/extend-expiry?days=7", headers=headers)
+        assert res.status_code == 200
+
+    ext_data = res.json()
+    extend_entries = [e for e in ext_data["decision_trail"] if e.get("action") == "EXTEND_EXPIRY"]
+    assert len(extend_entries) == 1, f"Expected 1 EXTEND_EXPIRY entry, got {len(extend_entries)}"
+
+    now_dt = datetime.now(timezone.utc)
+    exp_dt = datetime.fromisoformat(ext_data["link_expires_at"].replace("Z", "+00:00"))
+    assert exp_dt <= now_dt + timedelta(days=14, minutes=5)
+
+    # 2. Reopen twice
+    res_reopen1 = client.post(f"/api/shipments/{token}/reopen", headers=headers)
+    assert res_reopen1.status_code == 200
+    res_reopen2 = client.post(f"/api/shipments/{token}/reopen", headers=headers)
+    assert res_reopen2.status_code == 200
+
+    reopen_entries = [e for e in res_reopen2.json()["decision_trail"] if e.get("action") == "REOPEN_FOR_REVISION"]
+    assert len(reopen_entries) == 1, f"Expected 1 REOPEN_FOR_REVISION entry, got {len(reopen_entries)}"
+
+    # 3. Revoke twice
+    res_rev1 = client.post(f"/api/shipments/{token}/rotate-link?revoke=true", headers=headers)
+    assert res_rev1.status_code == 200
+    res_rev2 = client.post(f"/api/shipments/{token}/rotate-link?revoke=true", headers=headers)
+    assert res_rev2.status_code == 200
+
+    revoke_entries = [e for e in res_rev2.json()["decision_trail"] if e.get("action") == "REVOKED"]
+    assert len(revoke_entries) == 1, f"Expected 1 REVOKED entry, got {len(revoke_entries)}"
+
+
+
 
