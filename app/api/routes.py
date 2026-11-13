@@ -367,6 +367,11 @@ async def claim_workspace(
     user_owner_id = verify_supabase_token(token)
 
     sandbox_owner_id = x_workspace_id.strip() if x_workspace_id else "sandbox_default"
+    if not sandbox_owner_id.startswith("sandbox_"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sandbox workspace ID. Only unauthenticated sandbox sessions ('sandbox_*') can be claimed.",
+        )
     claimed_count = session_store.claim_sandbox_workspace(
         sandbox_owner_id=sandbox_owner_id,
         user_owner_id=user_owner_id,
@@ -635,7 +640,19 @@ async def patch_discrepancy(
     token: str,
     discrepancy_id: str,
     req: PatchResolutionRequest,
+    owner_id: str = Depends(get_current_owner_id),
 ) -> AuditResponse:
+    if not isinstance(owner_id, str):
+        owner_id = "sandbox_default"
+
+    actual_owner = session_store.get_owner(token)
+    if req.actor_role == "BUYER_WORKBENCH":
+        if actual_owner and actual_owner.startswith("user_") and owner_id != actual_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized: Buyer credentials required to approve exceptions on this shipment.",
+            )
+
     try:
         updated_session = session_store.resolve_discrepancy(
             token=token,
@@ -646,6 +663,11 @@ async def patch_discrepancy(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
     except ValueError as exc:

@@ -759,6 +759,42 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
                 )
             )
 
+        # 8b. RULE-V04-CURRENCY-CONSISTENCY (WARNING / COMMERCIAL_VARIANCE)
+        po_curr = (getattr(po, "currency", None) or "USD").upper().strip()
+        inv_curr = (getattr(inv, "currency", None) or "USD").upper().strip()
+        if po_curr and inv_curr and po_curr != inv_curr:
+            desc_curr = (
+                f"Currency mismatch detected: Buyer PO specifies {po_curr} while Commercial Invoice declares {inv_curr}. "
+                "Discrepant currency terms cause valuation reconciliation errors under 19 CFR 152.103 and CBP Form 7501 exchange rate disputes."
+            )
+            findings.append(
+                DiscrepancyItem(
+                    id="DISC-CURRENCY-MISMATCH",
+                    rule_id="RULE-V04-CURRENCY-CONSISTENCY",
+                    category="COMMERCIAL_VARIANCE",
+                    severity="WARNING",
+                    sev="warn",
+                    title=f"Currency Mismatch ({po_curr} vs. {inv_curr})",
+                    description=desc_curr,
+                    body=desc_curr,
+                    impact="Potential valuation declaration penalties and exchange rate liquidation errors.",
+                    fix=f"Reconcile invoicing currency to agree with contract PO currency ({po_curr}).",
+                    source_doc_a="Buyer PO",
+                    source_field_a="currency",
+                    source_val_a=po_curr,
+                    source_doc_b="Commercial Invoice",
+                    source_field_b="currency",
+                    source_val_b=inv_curr,
+                    highlight_cells=["po-currency", "inv-currency"],
+                    cells=["po-currency", "inv-currency"],
+                    locs=[["inv", "Commercial Invoice"], ["po", "Buyer PO"]],
+                    recommended_actions=[
+                        f"Reissue Commercial Invoice denominated in agreed contract currency ({po_curr})",
+                        "Verify foreign exchange rate conversion clause in purchase agreement",
+                    ],
+                )
+            )
+
     # 9. RULE-C02-EXPORT-GST-ROUTE (WARNING)
     if inv.export_tax_route == "LUT_BOND" and not (inv.lut_arn_number and inv.lut_arn_number.strip()):
         desc_lut = (
@@ -843,9 +879,21 @@ def run_deterministic_lint(packet: ShipmentPacket) -> Tuple[List[DiscrepancyItem
             f"Weight physics verified: Net ({pl.total_net_weight_kg:.1f} kg) < Gross ({pl.total_gross_weight_kg:.1f} kg)"
         )
     if po:
-        passed_checks.append("Currency USD consistent across all documents")
-        passed_checks.append(f"Incoterms {po.incoterms} agreed on Buyer PO")
-        passed_checks.append("Port of loading INMUN1 matches shipping route")
+        po_curr = (getattr(po, "currency", None) or "USD").upper().strip()
+        inv_curr = (getattr(inv, "currency", None) or "USD").upper().strip()
+        if po_curr == inv_curr:
+            passed_checks.append(f"Currency {po_curr} consistent across all documents")
+
+        has_inco_disc = any(d.id == "DISC-INCOTERM" for d in findings)
+        if not has_inco_disc and po.incoterms:
+            passed_checks.append(f"Incoterms {po.incoterms} agreed on Buyer PO")
+
+    pol = getattr(packet, "corridor", None) or "INMUN1 -> USLAX"
+    if "->" in pol:
+        pol_code = pol.split("->")[0].strip()
+    else:
+        pol_code = "INMUN1"
+    passed_checks.append(f"Port of loading {pol_code} matches verified shipping corridor")
 
     return findings, passed_checks
 

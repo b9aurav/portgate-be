@@ -891,5 +891,34 @@ def test_idempotent_reopen_revoke_and_clamped_expiry_endpoints(client: TestClien
     assert len(revoke_entries) == 1, f"Expected 1 REVOKED entry, got {len(revoke_entries)}"
 
 
+def test_supplier_portal_cannot_approve_accepted_exception(client: TestClient, dirty_packet_v1: ShipmentPacket):
+    """Regression test for CHAOS-02: Supplier portal role cannot approve commercial exceptions."""
+    audit = run_deterministic_audit(dirty_packet_v1)
+    stored = session_store.create_or_replace_session(audit, owner_id="sandbox_supplier_guard")
+    token = stored.session_token
+
+    patch_payload = {
+        "resolution_state": "ACCEPTED_EXCEPTION",
+        "resolution_reason_chip": "Supplier Waiver",
+        "resolution_note": "Supplier attempting to self-waive discrepancy",
+        "actor_role": "SUPPLIER_PORTAL",
+    }
+    res = client.patch(f"/api/links/{token}/discrepancies/DISC-CARTONS", json=patch_payload)
+    assert res.status_code == 403
+    assert "Suppliers cannot approve commercial exceptions" in res.json().get("detail", "")
+
+
+def test_workspace_claim_enforces_sandbox_prefix(client: TestClient):
+    """Regression test for CHAOS-10: Claim workspace rejects IDs that do not start with 'sandbox_'."""
+    headers = {
+        "Authorization": "Bearer valid_token_buyer_alpha",
+        "X-Workspace-Id": "victim_account_id",
+    }
+    res = client.post("/api/workspace/claim", headers=headers)
+    assert res.status_code == 400
+    assert "Invalid sandbox workspace ID" in res.json().get("detail", "")
+
+
+
 
 

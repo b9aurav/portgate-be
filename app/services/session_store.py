@@ -101,6 +101,36 @@ def _append_decision_entry(trail: List[Dict[str, Any]], entry: Dict[str, Any]) -
     return entry
 
 
+def derive_audit_status(discrepancies: List[Any]) -> Tuple[int, str]:
+    """
+    Unified Single Source of Truth for queue and session status computation.
+    Evaluates active unresolved items and derives granular customs compliance states:
+    - VERIFIED_CLEAN: 0 discrepancies found in initial 3-way audit.
+    - CLEARED_WITH_EXCEPTIONS: All discrepancies resolved/signed off with authorized waivers.
+    - AWAITING_SUPPLIER_REVISION: At least one item was rejected/flagged for supplier revision.
+    - BUYER_REVIEW: No deterministic conflicts; only commercial variances or advisories need buyer triage.
+    - ACTION_REQUIRED: Critical deterministic conflicts present needing action.
+    """
+    unresolved_items = [
+        d for d in discrepancies if getattr(d, "resolution_state", "UNRESOLVED") in ("UNRESOLVED", "REVISION_REQUESTED")
+    ]
+    unresolved_count = len(unresolved_items)
+    det_count = sum(1 for d in unresolved_items if getattr(d, "category", "") == "DETERMINISTIC_CONFLICT")
+    com_count = sum(1 for d in unresolved_items if getattr(d, "category", "") == "COMMERCIAL_VARIANCE")
+    adv_count = sum(1 for d in unresolved_items if getattr(d, "category", "") == "COMPLIANCE_ADVISORY")
+
+    if unresolved_count == 0:
+        status_str = "CLEARED_WITH_EXCEPTIONS" if discrepancies else "VERIFIED_CLEAN"
+    elif any(getattr(d, "resolution_state", "") == "REVISION_REQUESTED" for d in discrepancies):
+        status_str = "AWAITING_SUPPLIER_REVISION"
+    elif det_count == 0 and (com_count > 0 or adv_count > 0):
+        status_str = "BUYER_REVIEW"
+    else:
+        status_str = "ACTION_REQUIRED"
+
+    return unresolved_count, status_str
+
+
 class SessionStore:
     """
     Multi-tenant session store managing pre-shipment audit packets in Supabase
@@ -482,22 +512,12 @@ class SessionStore:
         meta = s.metadata or {}
 
         unresolved_items = [
-            d for d in s.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
+            d for d in s.discrepancies if getattr(d, "resolution_state", "UNRESOLVED") in ("UNRESOLVED", "REVISION_REQUESTED")
         ]
-        unresolved_count = len(unresolved_items)
-        det_count = sum(1 for d in unresolved_items if d.category == "DETERMINISTIC_CONFLICT")
-        com_count = sum(1 for d in unresolved_items if d.category == "COMMERCIAL_VARIANCE")
-        adv_count = sum(1 for d in unresolved_items if d.category == "COMPLIANCE_ADVISORY")
-
-        # Status computation
-        if unresolved_count == 0:
-            status_str = "CLEARED_WITH_EXCEPTIONS" if s.discrepancies else "VERIFIED_CLEAN"
-        elif any(d.resolution_state == "REVISION_REQUESTED" for d in s.discrepancies):
-            status_str = "AWAITING_SUPPLIER_REVISION"
-        elif det_count == 0 and (com_count > 0 or adv_count > 0):
-            status_str = "BUYER_REVIEW"
-        else:
-            status_str = "ACTION_REQUIRED"
+        det_count = sum(1 for d in unresolved_items if getattr(d, "category", "") == "DETERMINISTIC_CONFLICT")
+        com_count = sum(1 for d in unresolved_items if getattr(d, "category", "") == "COMMERCIAL_VARIANCE")
+        adv_count = sum(1 for d in unresolved_items if getattr(d, "category", "") == "COMPLIANCE_ADVISORY")
+        unresolved_count, status_str = derive_audit_status(s.discrepancies)
 
         shipment_id = packet.shipment_id if packet else (s.shipment_ref or "SHP-UNKNOWN")
         corridor = (
@@ -642,6 +662,10 @@ class SessionStore:
     def get_session_files(self, token: str) -> Dict[str, Any]:
         """Returns the stored uploaded file bytes and metadata for the session."""
         return self._files.setdefault(token, {})
+
+    def get_owner(self, token: str) -> Optional[str]:
+        """Returns the owner_id associated with a session token."""
+        return self._owners.get(token)
 
     def update_session_reaudit(
         self,
@@ -846,15 +870,9 @@ class SessionStore:
 
         new_audit.auto_resolved_in_latest_rev = auto_resolved_ids
 
-        unresolved = sum(
-            1 for d in new_audit.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
-        )
+        unresolved, status_str = derive_audit_status(new_audit.discrepancies)
         new_audit.summary.unresolved_count = unresolved
-        new_audit.summary.status = (
-            "ACTION_REQUIRED"
-            if unresolved > 0
-            else ("CLEARED_WITH_EXCEPTIONS" if new_audit.discrepancies else "VERIFIED_CLEAN")
-        )
+        new_audit.summary.status = status_str
 
         if new_files:
             stored = self._files.setdefault(token, {})
@@ -892,6 +910,9 @@ class SessionStore:
         session = self.get_session(token)
         if not session:
             raise KeyError(f"Audit session '{token}' not found.")
+
+        if patch_data.actor_role == "SUPPLIER_PORTAL" and patch_data.resolution_state == "ACCEPTED_EXCEPTION":
+            raise PermissionError("Suppliers cannot approve commercial exceptions or waivers for their own documents.")
 
         actor_name = (
             "US Buyer Import Specialist"
@@ -959,15 +980,9 @@ class SessionStore:
         _append_decision_entry(session.decision_trail, log_entry)
 
         # Recompute unresolved count and overall status
-        unresolved = sum(
-            1 for d in session.discrepancies if d.resolution_state in ("UNRESOLVED", "REVISION_REQUESTED")
-        )
+        unresolved, status_str = derive_audit_status(session.discrepancies)
         session.summary.unresolved_count = unresolved
-        session.summary.status = (
-            "ACTION_REQUIRED"
-            if unresolved > 0
-            else ("CLEARED_WITH_EXCEPTIONS" if session.discrepancies else "VERIFIED_CLEAN")
-        )
+        session.summary.status = status_str
         session.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Update Supabase

@@ -15,7 +15,7 @@ GOOGLE_API_KEY: str | None = os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 GEMINI_FALLBACK_MODEL: str = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.8-flash")
 
-_raw_origins: str = os.getenv("ALLOWED_ORIGINS", "*")
+_raw_origins: str = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 ALLOWED_ORIGINS: list[str] = (
     ["*"]
     if _raw_origins.strip() == "*"

@@ -384,6 +384,32 @@ def build_audit_response(
 
     inv_declared_po = inv.buyer_po_ref or getattr(inv, "buyer_po_number", None) or ""
 
+    exp_street = getattr(inv, "exporter_street", None) or ""
+    exp_city = getattr(inv, "exporter_city", None) or ""
+    exp_state = getattr(inv, "exporter_state", None) or "Gujarat"
+    exp_postal = getattr(inv, "exporter_postal", None) or "394221"
+    exp_country = getattr(inv, "exporter_country_iso", None) or "IN"
+
+    if not exp_street or not exp_city:
+        raw_addr = getattr(inv, "exporter_address", None) or (getattr(po, "supplier_address", None) if po else "") or ""
+        if raw_addr:
+            parts = [p.strip() for p in raw_addr.split(",") if p.strip()]
+            if len(parts) >= 3:
+                exp_street = f"{parts[0]}, {parts[1]}" if not exp_street else exp_street
+                exp_city = parts[2] if not exp_city else exp_city
+                exp_state = parts[3] if len(parts) > 3 else exp_state
+                exp_postal = parts[4] if len(parts) > 4 else exp_postal
+                exp_country = parts[5] if len(parts) > 5 and len(parts[5]) == 2 else exp_country
+            elif len(parts) == 2:
+                exp_street = parts[0] if not exp_street else exp_street
+                exp_city = parts[1] if not exp_city else exp_city
+
+    exp_street = exp_street or "Plot 2301, GIDC Pandesara"
+    exp_city = exp_city or "Surat"
+
+    inv_currency = getattr(inv, "currency", None) or "USD"
+    po_currency = (getattr(po, "currency", None) if po else None) or inv_currency
+
     metadata_ui: Dict[str, Any] = {
         "po_number": po.po_number if po else (inv.buyer_po_ref or "PO-UNKNOWN"),
         "buyer_po_ref": inv_declared_po,
@@ -394,11 +420,11 @@ def build_audit_response(
         "invoice_date": inv.invoice_date,
         "packing_list_no": pl.pl_number,
         "exporter_name": inv.exporter_name,
-        "exporter_street": "Plot 2301, GIDC Pandesara",
-        "exporter_city": "Surat",
-        "exporter_state": "Gujarat",
-        "exporter_postal": "394221",
-        "exporter_country_iso": "IN",
+        "exporter_street": exp_street,
+        "exporter_city": exp_city,
+        "exporter_state": exp_state,
+        "exporter_postal": exp_postal,
+        "exporter_country_iso": exp_country,
         "exporter_gstin": inv.exporter_gstin or "24AABCS1429B1Z5",
         "exporter_iec": "5214098211",
         "exporter_lut_arn": inv.lut_arn_number or "",
@@ -407,19 +433,19 @@ def build_audit_response(
         "importer_city_state": "Los Angeles, CA",
         "port_of_loading": "INMUN1",
         "port_of_discharge": "USLAX",
-        "incoterm": po.incoterms if po else "FOB Mundra",
-        "currency": "USD",
+        "incoterm": getattr(inv, "incoterms", None) or (po.incoterms if po else "FOB Mundra"),
+        "currency": inv_currency,
         "po_incoterm": po.incoterms if po else "FOB Mundra",
-        "po_currency": "USD",
+        "po_currency": po_currency,
         "total_cartons_declared": inv.total_cartons_declared,
         "total_cartons": pl.total_cartons,
     }
 
     mid_code = generate_cbp_mid(
-        country_iso="IN",
+        country_iso=exp_country,
         company_name=inv.exporter_name,
-        street_address="Plot 2301, GIDC Pandesara",
-        city="Surat",
+        street_address=exp_street,
+        city=exp_city,
     )
 
     expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()

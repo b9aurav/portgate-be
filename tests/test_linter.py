@@ -559,5 +559,22 @@ def test_unexpected_invoice_line_mismatch(clean_packet: ShipmentPacket):
     assert "Unordered Item" in line_mismatch.title or "Uncontracted Cargo" in line_mismatch.title
 
 
+def test_currency_consistency_rule_and_passed_checks(clean_packet: ShipmentPacket):
+    """Regression test for CHAOS-05: Currency mismatch triggers DISC-CURRENCY-MISMATCH and omits passed check."""
+    packet = copy.deepcopy(clean_packet)
+    packet.buyer_po.currency = "USD"
+    packet.commercial_invoice.currency = "EUR"
+
+    findings, passed_checks = run_deterministic_lint(packet)
+    curr_disc = next((f for f in findings if f.id == "DISC-CURRENCY-MISMATCH"), None)
+
+    assert curr_disc is not None
+    assert curr_disc.category == "COMMERCIAL_VARIANCE"
+    assert curr_disc.severity == "WARNING"
+    assert "Currency mismatch detected" in curr_disc.description
+    assert not any("Currency USD consistent" in pc for pc in passed_checks)
+
+
+
 
 

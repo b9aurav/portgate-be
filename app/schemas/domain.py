@@ -72,6 +72,12 @@ class CommercialInvoice(BaseModel):
     invoice_number: str
     invoice_date: str
     exporter_name: str
+    exporter_street: Optional[str] = "Plot 2301, GIDC Pandesara"
+    exporter_city: Optional[str] = "Surat"
+    exporter_state: Optional[str] = "Gujarat"
+    exporter_postal: Optional[str] = "394221"
+    exporter_country_iso: Optional[str] = "IN"
+    exporter_address: Optional[str] = None
     exporter_gstin: Optional[str] = None
     export_tax_route: Literal["LUT_BOND", "IGST_PAYMENT", "UNKNOWN"] = "LUT_BOND"
     lut_arn_number: Optional[str] = None
@@ -80,6 +86,7 @@ class CommercialInvoice(BaseModel):
     buyer_po_number: Optional[str] = None
     incoterms: Optional[str] = "FOB MUNDRA"
     incoterm: Optional[str] = None
+    currency: Optional[str] = "USD"
     total_cartons_declared: int = 0
     total_net_weight_kg: float = 0.0
     total_gross_weight_kg: float = 0.0
